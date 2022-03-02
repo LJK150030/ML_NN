@@ -5,8 +5,14 @@
 # %% [markdown]
 # Submission Details: Turn in the rendered jupyter notebook (exported as HTML) to canvas. Only one notebook per team is required, but team names must be on the assignment. 
 
+# %%
+from PIL import Image
+
 # %% [markdown]
 # In this lab you will find and analyze a circuit in a common neural network.  A reference figure is also shown to help clarify the process of finding and analyzing deep circuits. https://ai.googleblog.com/2015/06/inceptionism-going-deeper-into-neural.html
+
+# %%
+Image.open("Data/CircuitsFigure.png")
 
 # %% [markdown]
 # [3 Points] In groups, you should select a convolutional neural network model that has been pre-trained on a large dataset (preferably, ImageNet). These already trained models are readily available online through many mechanisms, including the keras.application package (Inception, Xception, VGG etc.) https://keras.io/api/applications/Links to an external site. Simplicity in architecture is helpful (such as VGG or other network with relatively few layers and without complex feed forward operations in the overall flow). 
