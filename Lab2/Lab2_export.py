@@ -206,7 +206,7 @@ feature_extractor = keras.Model(inputs=model.inputs, outputs=layer.output)
 # %%
 
 
-def compute_loss(input_image, filter_index):
+def compute_loss(input_image, filter_index, feature_extractor):
     # get the activation values for our target layer
     activation = feature_extractor(input_image)
 
@@ -216,12 +216,12 @@ def compute_loss(input_image, filter_index):
 
 
 @tf.function
-def gradient_ascent_step(img, filter_index, learning_rate):
+def gradient_ascent_step(img, filter_index, learning_rate, feature_extractor):
     # Gradient tap bookkeeps the changes of an input. Given an image, we want to determine the
     # loss produced by the image and the specific filter from the network
     with tf.GradientTape() as tape:
         tape.watch(img)
-        loss = compute_loss(img, filter_index)
+        loss = compute_loss(img, filter_index, feature_extractor)
     # Compute gradients.
     grads = tape.gradient(loss, img)
     # Normalize gradients.
@@ -235,14 +235,15 @@ def initialize_image(img_w, img_h):
     return (img - 0.5) * 0.25
 
 
-def visualize_filter(filter_index, img_w, img_h):
+def visualize_filter(filter_index, img_w, img_h, feature_extractor):
     # Given an image with random pixle values, can we iterate over the image and iterested filter
     # such that each iteration increases the pixle values of the image based on the activation of interesed filter
     iterations = 30
     learning_rate = 10.0
     img = initialize_image(img_w, img_h)
     for iteration in range(iterations):
-        loss, img = gradient_ascent_step(img, filter_index, learning_rate)
+        loss, img = gradient_ascent_step(
+            img, filter_index, learning_rate, feature_extractor)
 
     # transfrom the final image into a visual picture
     img = deprocess_image(img[0].numpy())
@@ -269,7 +270,7 @@ def deprocess_image(img):
 
 
 # %%
-loss, img = visualize_filter(195, img_width, img_height)
+loss, img = visualize_filter(195, img_width, img_height, feature_extractor)
 keras.preprocessing.image.save_img("195.png", img)
 display(Image("195.png"))
 
@@ -285,6 +286,7 @@ img_path = keras.utils.get_file(
 img_tensor = get_img_array(img_path, target_size=(526, 1306))
 
 plt.axis("off")
+plt.figure(figsize=(20, 20))
 plt.imshow(img_tensor[0].astype("uint8"))
 plt.show()
 
@@ -383,8 +385,36 @@ plot_filters(top_filters)
 # %% [markdown]
 # [4 Points] For each of the six input filters that are strongest, use image gradient techniques to visualize what each of these filters is most excited by (that is, what image maximally excites each of these filters?).
 
+
+prev_layer_name = "block3_conv2"
+
+# Set VGG19 model to return the activation values of our layer
+prev_layer = model.get_layer(name=prev_layer_name)
+feature_extractor = keras.Model(inputs=model.inputs, outputs=prev_layer.output)
+
+for idx, channel in enumerate(top_indices):
+    loss, img = visualize_filter(
+        channel, img_width, img_height, feature_extractor)
+    image_path = f"prev_{channel}.png"
+    keras.preprocessing.image.save_img(image_path, img)
+    with PIL_Image.open(image_path) as pil_img:
+        plt.imshow(pil_img)
+        plt.title(
+            f'Image that "activates" channel {channel} of previous layer most')
+        plt.show()
+
+    filter = top_filters[:, :, idx]
+    plt.imshow(filter,
+               norm=matplotlib.colors.Normalize(-0.12, 0.12),
+               cmap=plt.get_cmap('bwr'))
+    plt.title(
+        f'Filter for channel {channel} of previous layer')
+    plt.show()
+
+
 # %% [markdown]
 # Use these visualizations, along with the circuit weights you just discovered to try and explain how this particular circuit works. An example of this visualization style can be seen here: https://storage.googleapis.com/distill-circuits/inceptionv1-weight-explorer/mixed3b_379.htmlLinks to an external site.
+
 
 # %% [markdown]
 # Try to define the properties of this circuit using vocabulary from https://distill.pub/2020/circuits/zoom-in/Links to an external site. (such as determining if this is polysemantic, pose-invariant, etc.)
