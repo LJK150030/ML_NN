@@ -42,8 +42,6 @@ PIL_Image.open("Data/CircuitsFigure.png")
 # %% [markdown]
 # We've choosen the VGG19 model, a pre-trianed convolutional neural network created by Simonyan and Zisserman from Visual Geometry Group (VGG) at University of Oxford in 2014. Trained on ImageNet ILSVRC data set of 1000 image classes. We choose this model because we wish to learn more about it's simplistic design, as well as it's reputation within the Machine Learning and Computer Vision compunity.
 
-# %% [markdown]
-# As a fun experiment, we would like to determine if a circuit can be excited on an image classification that the model has not been trained for. In particular, we would like to see if images of Ghost orbs can be classified. We hypothesis that the model will try to classify objects in the background of the image. However, if the classifer can detect classifications such as light or ball, such as soccer ball, balloon, croquet ball, golf ball, baseball, ping-pong ball, volleyball, then we can conclude that the model is detecting the ghost orb.
 
 # %% [markdown]
 # ### 1.1 Model Overview
@@ -123,59 +121,6 @@ x = preprocess_input(img_tensor)
 preds = model.predict(x)
 print('Predicted:', decode_predictions(preds, top=3)[0])
 
-# %% [markdown]
-# ### 1.3 Target Image Classification
-
-# %%
-# Get Image from website
-img_path = keras.utils.get_file(
-    fname="ghost_orb_1.jpg",
-    origin="https://res.cloudinary.com/miles-extranet-dev/image/upload/v1521832821/Georgia/migration_photos/36981/SAM_6187.jpg")
-
-# Transform Image to tensor
-img_tensor = get_img_array(img_path, target_size=(224, 224))
-
-plt.axis("off")
-plt.imshow(img_tensor[0].astype("uint8"))
-plt.show()
-
-x = preprocess_input(img_tensor)
-preds = model.predict(x)
-print('Predicted:', decode_predictions(preds, top=3)[0])
-
-# %%
-# Get Image from website
-img_path = keras.utils.get_file(
-    fname="ghost_orb_3.jpg",
-    origin="https://i.pinimg.com/originals/36/a0/1b/36a01bc7053faeaccbaa8cccb9d98c81.jpg")
-
-# Transform Image to tensor
-img_tensor = get_img_array(img_path, target_size=(224, 224))
-
-plt.axis("off")
-plt.imshow(img_tensor[0].astype("uint8"))
-plt.show()
-
-x = preprocess_input(img_tensor)
-preds = model.predict(x)
-print('Predicted:', decode_predictions(preds, top=3)[0])
-
-# %%
-# Get Image from website
-img_path = keras.utils.get_file(
-    fname="ghost_orb_4.jpg",
-    origin="https://live.staticflickr.com/2489/3927077693_414b86d8a0_b.jpg")
-
-# Transform Image to tensor
-img_tensor = get_img_array(img_path, target_size=(224, 224))
-
-plt.axis("off")
-plt.imshow(img_tensor[0].astype("uint8"))
-plt.show()
-
-x = preprocess_input(img_tensor)
-preds = model.predict(x)
-print('Predicted:', decode_predictions(preds, top=3)[0])
 
 # %% [markdown]
 # [4 Points] Select a multi-channel filter (i.e., a feature) in a layer in which to analyze as part of a circuit. This should be a multi-channel filter in a "mid-level" portion of the network (that is, there are a few convolutional layers before and after this chosen layer). You might find using OpenAI microscope a helpful tool for selecting a filter to analyze without writing too much code: https://microscope.openai.com/models/
@@ -235,10 +180,9 @@ def initialize_image(img_w, img_h):
     return (img - 0.5) * 0.25
 
 
-def visualize_filter(filter_index, img_w, img_h, feature_extractor):
+def visualize_filter(filter_index, img_w, img_h, feature_extractor, iterations=30):
     # Given an image with random pixle values, can we iterate over the image and iterested filter
     # such that each iteration increases the pixle values of the image based on the activation of interesed filter
-    iterations = 30
     learning_rate = 10.0
     img = initialize_image(img_w, img_h)
     for iteration in range(iterations):
@@ -379,8 +323,8 @@ plot_filters(top_filters)
 
 # %% [markdown]
 # For these six strongest input filters, categorize each as "mostly inhibitory" or "mostly excitatory." That is, does each filter consist of mostly negative or mostly positive coefficients?
-
-# From the above images, we can see that the filters for channels (of previous layer) 244, 113, 169, 219, 104 are "mostly excitatory", filter for channel 124 is "mostly inhibitory"
+# - Note: red is positive, and blue is negative.
+# - From the above images, we can see that the filters for channels (of previous layer) 244, 113, 169, 219, 104 are "mostly excitatory", filter for channel 124 is "mostly inhibitory"
 
 # %% [markdown]
 # [4 Points] For each of the six input filters that are strongest, use image gradient techniques to visualize what each of these filters is most excited by (that is, what image maximally excites each of these filters?).
@@ -393,8 +337,13 @@ prev_layer = model.get_layer(name=prev_layer_name)
 feature_extractor = keras.Model(inputs=model.inputs, outputs=prev_layer.output)
 
 for idx, channel in enumerate(top_indices):
+    iterations = 30
+    # if channel == 124:
+    #     iterations = 500
+    # else:
+    #     continue
     loss, img = visualize_filter(
-        channel, img_width, img_height, feature_extractor)
+        channel, img_width, img_height, feature_extractor, iterations)
     image_path = f"prev_{channel}.png"
     keras.preprocessing.image.save_img(image_path, img)
     with PIL_Image.open(image_path) as pil_img:
@@ -416,5 +365,27 @@ for idx, channel in enumerate(top_indices):
 # Use these visualizations, along with the circuit weights you just discovered to try and explain how this particular circuit works. An example of this visualization style can be seen here: https://storage.googleapis.com/distill-circuits/inceptionv1-weight-explorer/mixed3b_379.htmlLinks to an external site.
 
 
+# %%
+with PIL_Image.open('explanation.png') as pil_img:
+    display(pil_img)
+
+# %% [markdown]
+# Note: The image that 'excites' channel 124 looks like random noise / did not converge and it does not match the image found on https://microscope.openai.com/ . We tried increasing the number of iterations but the image still will not converge. This issues was not found in other channels.
+
+# How this circuit might work:
+# From the histogram in the previous part, we know that the filters for the top three channels have much higher L2 norms than the other filters so we will focus on them.
+# From observing the generated image that excites the channels the most, and from observing actual images that excite the channels we hypothesize that:
+# - Channel 244 from previous layer is excited by small bright spots. It is highly excitatory to channel 195.
+# - Channel 113 from previous layer is excited by medium sized circles of light, and also text to some degree (possibly due to the circles inside 'O' and '6' and '9' etc). It is highly excitatory to channel 195.
+# - Channel 124 from previous layer is excited by text. It is highly inhibitory to channel 195. Therefore channel 195 will ignore text somewhat excites channel 113.
+# - The end result is that channel 195 is excited by medium sized circles with small highlights within, for example smooth spherical objects with reflected highlights, and glowing lights with highlight and bloom.
+
+
 # %% [markdown]
 # Try to define the properties of this circuit using vocabulary from https://distill.pub/2020/circuits/zoom-in/Links to an external site. (such as determining if this is polysemantic, pose-invariant, etc.)
+
+# - This circuit does show properties of being pose-invariant as it is focused on circular shapes which have rotational symmetry.
+# - It is somewhat polysemantic as it seems to be excited by two visually similar but different phenomenon: reflected highlights on a spherical object and 'internal' highlights from a glowing object. 'Polysemantic Neurons' usually refer to channels that responds to multiple unrelated inputs, the two phenomenon are visually similar, thus it is not polysemantic in the sense that this channel is being used for two completely unrelated functions.
+# - It removes some of the polysemantic characteristics found in previous channels (ignores text from channel 113 that detects circular lights as well as text)
+
+# %%
