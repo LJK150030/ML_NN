@@ -41,6 +41,7 @@ PIL_Image.open("Data/CircuitsFigure.png")
 
 # %% [markdown]
 # We've choosen the VGG19 model, a pre-trianed convolutional neural network created by Simonyan and Zisserman from Visual Geometry Group (VGG) at University of Oxford in 2014. Trained on ImageNet ILSVRC data set of 1000 image classes. We choose this model because we wish to learn more about it's simplistic design, as well as it's reputation within the Machine Learning and Computer Vision compunity.
+#
 
 
 # %% [markdown]
@@ -123,10 +124,11 @@ print('Predicted:', decode_predictions(preds, top=3)[0])
 
 
 # %% [markdown]
+# ## Filter Selection and Explanation
 # [4 Points] Select a multi-channel filter (i.e., a feature) in a layer in which to analyze as part of a circuit. This should be a multi-channel filter in a "mid-level" portion of the network (that is, there are a few convolutional layers before and after this chosen layer). You might find using OpenAI microscope a helpful tool for selecting a filter to analyze without writing too much code: https://microscope.openai.com/models/
 
 # %% [markdown]
-# The channel that best works with our target classification is In VGG 19, conv3_3, unit 195 (https://microscope.openai.com/models/vgg19_caffe/conv3_3_conv3_3_0/195)
+# We select the filter VGG 19, conv3_3, unit 195 (https://microscope.openai.com/models/vgg19_caffe/conv3_3_conv3_3_0/195)
 
 # %% [markdown]
 # Using image gradient techniques, find an input image that maximally excites this chosen multi-channel filter. General techniques are available from f. Chollet: https://github.com/fchollet/deep-learning-with-python-notebooks/blob/master/chapter09_part03_interpreting-what-convnets-learn.ipynbLinks to an external site.
@@ -180,10 +182,9 @@ def initialize_image(img_w, img_h):
     return (img - 0.5) * 0.25
 
 
-def visualize_filter(filter_index, img_w, img_h, feature_extractor, iterations=30):
+def visualize_filter(filter_index, img_w, img_h, feature_extractor, iterations=30, learning_rate=10.0):
     # Given an image with random pixle values, can we iterate over the image and iterested filter
     # such that each iteration increases the pixle values of the image based on the activation of interesed filter
-    learning_rate = 10.0
     img = initialize_image(img_w, img_h)
     for iteration in range(iterations):
         loss, img = gradient_ascent_step(
@@ -244,6 +245,7 @@ plt.show()
 # [4 Points] Analyze each channel of the multi-channel filter to this feature that might form a circuit. That is, visualize the convolutional filter (one channel) between the input activations and the current activation to understand which inputs make up a circuit. One method of doing this is given below:
 
 # %% [markdown]
+# ## Extract Input Filters
 # Extract the filter coefficients for each input activation to that multi-channel filter. Note: If the multi-channel filter is 5x5 with an input channel size of 64, then this extraction will result in 64 different input filters, each of size 5x5.
 
 
@@ -266,6 +268,7 @@ print(
 
 
 # %% [markdown]
+# ## Top Six Filters
 # Keep the top six sets of inputs with the "strongest" weights. For now, you can use the L2 norm of each input filter as a measure of strength. Visualize these top six filters.
 
 
@@ -327,6 +330,7 @@ plot_filters(top_filters)
 # - From the above images, we can see that the filters for channels (of previous layer) 244, 113, 169, 219, 104 are "mostly excitatory", filter for channel 124 is "mostly inhibitory"
 
 # %% [markdown]
+# ## Top Six Filters Visualized
 # [4 Points] For each of the six input filters that are strongest, use image gradient techniques to visualize what each of these filters is most excited by (that is, what image maximally excites each of these filters?).
 
 
@@ -338,12 +342,13 @@ feature_extractor = keras.Model(inputs=model.inputs, outputs=prev_layer.output)
 
 for idx, channel in enumerate(top_indices):
     iterations = 30
+    learning_rate = 10
     # if channel == 124:
-    #     iterations = 500
+    #     iterations = 30
     # else:
     #     continue
     loss, img = visualize_filter(
-        channel, img_width, img_height, feature_extractor, iterations)
+        channel, img_width, img_height, feature_extractor, iterations, learning_rate)
     image_path = f"prev_{channel}.png"
     keras.preprocessing.image.save_img(image_path, img)
     with PIL_Image.open(image_path) as pil_img:
@@ -370,22 +375,24 @@ with PIL_Image.open('explanation.png') as pil_img:
     display(pil_img)
 
 # %% [markdown]
-# Note: The image that 'excites' channel 124 looks like random noise / did not converge and it does not match the image found on https://microscope.openai.com/ . We tried increasing the number of iterations but the image still will not converge. This issues was not found in other channels.
-
+# ## Hypothesis of how Circuit Works
+# Note: The image that 'excites' channel 124 looks like random noise / did not converge and it does not match the image found at https://microscope.openai.com/models/vgg19_caffe/conv3_2_conv3_2_0/124 . We tried increasing the number of iterations and adjusting the learning rate, both which did not result in improvement. This issues was not found in other channels.
+#
 # How this circuit might work:
 # From the histogram in the previous part, we know that the filters for the top three channels have much higher L2 norms than the other filters so we will focus on them.
 # From observing the generated image that excites the channels the most, and from observing actual images that excite the channels we hypothesize that:
 # - Channel 244 from previous layer is excited by small bright spots. It is highly excitatory to channel 195.
 # - Channel 113 from previous layer is excited by medium sized circles of light, and also text to some degree (possibly due to the circles inside 'O' and '6' and '9' etc). It is highly excitatory to channel 195.
-# - Channel 124 from previous layer is excited by text. It is highly inhibitory to channel 195. Therefore channel 195 will ignore text somewhat excites channel 113.
+# - Channel 124 from previous layer is excited by text. It is highly inhibitory to channel 195. Therefore channel 195 will ignore the text somewhat excites channel 113.
 # - The end result is that channel 195 is excited by medium sized circles with small highlights within, for example smooth spherical objects with reflected highlights, and glowing lights with highlight and bloom.
 
 
 # %% [markdown]
 # Try to define the properties of this circuit using vocabulary from https://distill.pub/2020/circuits/zoom-in/Links to an external site. (such as determining if this is polysemantic, pose-invariant, etc.)
 
-# - This circuit does show properties of being pose-invariant as it is focused on circular shapes which have rotational symmetry.
-# - It is somewhat polysemantic as it seems to be excited by two visually similar but different phenomenon: reflected highlights on a spherical object and 'internal' highlights from a glowing object. 'Polysemantic Neurons' usually refer to channels that responds to multiple unrelated inputs, the two phenomenon are visually similar, thus it is not polysemantic in the sense that this channel is being used for two completely unrelated functions.
-# - It removes some of the polysemantic characteristics found in previous channels (ignores text from channel 113 that detects circular lights as well as text)
+# - This circuit does show properties of pose-invariance / rotational invariance as it is focused on circular shapes which have rotational symmetry.
+# - This circuit does not show too much scale invariance. It is focused on small bright circles inside larger circles. It does not combine several filters that are excited by the same features of different scales.
+# - The circuit is somewhat polysemantic as it seems to be excited by two visually similar but different phenomenon: reflected highlights on a spherical object and 'internal' highlights from a glowing object. 'Polysemantic Neurons' usually refer to channels that responds to multiple unrelated inputs, the two phenomenon are visually similar, thus it is not really polysemantic in the sense that a channel is being used for two completely unrelated functions, but it does seem to be a circuit that is general enough to be used in several different ways deeper down the network.
+# - The circuit removes some of the polysemantic characteristics found in previous channels (ignores text from channel 113 that detects circular lights as well as text)
 
 # %%
