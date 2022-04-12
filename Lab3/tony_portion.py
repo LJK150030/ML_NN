@@ -1,62 +1,11 @@
 # %% [markdown]
-# ## Universal Style Transfer
-# The models above are trained to work for a single style. Using these methods, in order to create a new style transfer model, you have to train the model with a wide variety of content images.
-#
-# Recent work by Yijun Li et al. shows that it is possible to create a model that generalizes to unseen style images, while maintaining the quality of output images.
-#
-# Their method works by treating style transfer as an image reconstruction task. They use the output of a VGG19 ReLU layer to encode features of various content images and traing a decoder to reconstruct these images. Then, with these two networks fixed, they feed the content and the style image into the encoder and use a whitening and coloring transform so that the covarience matrix of the features matches the covarience matrix of the style.
-#
-# This process can then be expanded to the remaining ReLU layers of VGG19 to create a style transfer pipeline that can apply to all spatial scales.
-#
-# Since only content images were used to train the encoder and decoder, additional training is not needed when generalizing this to new styles.
-#
-# <img src="images/universal-style-transfer.png" style="width: 600px;"/>
-# (Yijun Li et al., Universal Style Transfer)
-#
-# <img src="images/doge_the_scream.jpg" style="width: 300px;"/>
-# <img src="images/doge_mosaic.jpg" style="width: 300px;"/>
-#
-# The results are pretty impressive, but there are some patches of blurriness, most likely as a result of the transforms.
-#
-# ### Whitening Transform
-#
-# The whitening transform removes the style from the content image, keeping the global content structure.
-#
-# The features of the content image, $f_c$, are transformed to obtain $\hat{f}_c$, such that the feature maps
-# are uncorrelated ($\hat{f}_c \hat{f}_c^T = I$),
-#
-# $$
-#     \hat{f}_c = E_c D_c^{- \frac{1}{2}} E_c^T f_c
-# $$
-#
-# where $D_c$ is a diagonal matrix with the eigenvalues of the covariance matrix $f_c f_c^T \in R^{C \times C}$,
-# and $E_c$ is the corresponding orthogonal matrix of eigenvectors, satisfying $f_c f_c^T = E_c D_c E_c^T$.
-#
-# <img src="images/whitening.png" style="width: 300px;"/>
-# (Yijun Li et al., Universal Style Transfer)
-#
-#
-# ### Coloring Transform
-#
-# The coloring transform adds the style from the style image onto the content image.
-#
-# The whitening transformed features of the content image, $\hat{f}_c$, are transformed to obtain $\hat{f}_{cs}$, such that the feature maps have that desired correlations ($\hat{f}_{cs} \hat{f}_{cs}^T = f_s f_s^T$),
-#
-# $$
-#     \hat{f}_{cs} = E_s D_s^{\frac{1}{2}} E_s^T \hat{f}_c
-# $$
-#
-# where $D_s$ is a diagonal matrix with the eigenvalues of the covariance matrix $f_s f_s^T \in R^{C \times C}$,
-# and $E_s$ is the corresponding orthogonal matrix of eigenvectors, satisfying $f_c f_c^T = E_c D_c E_c^T$.
-#
-# In practice, we also take a weighted sum of the colored and original activations such that:
-#
-# $$ f_{blend} = \alpha\hat{f}_{cs} + (1-\alpha)\hat{f}_c $$
-#
-# Before each transform step, the mean of the corresponding feature maps are subtracted, and the mean of the style features are added back to the final transformed features.
+
+# ## Using a pretrained auto-encoder
+
+# - Since the autoencoder that we trained was not reconstructing the images well, we decided to use the pretrained auto-encoder by Yihao Wang, Below code is modified from 05c UniversalStyleTransfer.ipynb and weights are taken from https://www.dropbox.com/sh/2djb2c0ohxtvy2t/AAAxA2dnoFBcHGqfP0zLx-Oua?dl=0
+# - Code modifications: broke out sections of code to improve reusability
 
 # %%
-# workaround for multiple OpenMP on Mac
 from PIL import Image
 from skimage.transform import resize
 import functools
@@ -72,8 +21,8 @@ from pathlib import PurePath
 import tensorflow as tf
 import os
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
+# Could not get CUDA to work, tensorflow show ship with the CUDA dll that works for them like pytorch does
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
-
 
 mpl.rcParams['figure.figsize'] = (12, 12)
 mpl.rcParams['axes.grid'] = False
@@ -132,15 +81,6 @@ def imshow(image, title=None):
     # else:
     #     title += ' '+str(image.shape)
     plt.title(title)
-
-# %% [markdown]
-# # Using a pre-trained AutoEncoder
-# For this assignment, i will be using an auto encoder created with Yihao Wang, a PhD student in the UbiComp lab here at SMU. The original code used to created this encoder is available for SMU students.
-#
-# The model that was trained can be downloaded from:
-# https://www.dropbox.com/sh/2djb2c0ohxtvy2t/AAAxA2dnoFBcHGqfP0zLx-Oua?dl=0
-
-# %%
 
 
 class VGG19AutoEncoder(tf.keras.Model):
@@ -203,7 +143,13 @@ class VGG19AutoEncoder(tf.keras.Model):
                 reconstructed = final_layer(decoded)
                 imshow(reconstructed, f'Reconstructed, Model: {model_name}')
 
-    def call_style_blend(self, content_image, style_a_image, style_b_image, alpha_a, alpha_b, alpha_content):
+    def call_style_blend(self,
+                         content_image,
+                         style_a_image,
+                         style_b_image,
+                         alpha_a,
+                         alpha_b,
+                         alpha_content):
 
         model_ids = [3, 2, 1]
         x = content_image
@@ -219,12 +165,13 @@ class VGG19AutoEncoder(tf.keras.Model):
             activation_content = encoder(tf.constant(x))
             activation_style_a = encoder(tf.constant(style_a_image))
             activation_style_b = encoder(tf.constant(style_b_image))
-            blended_activations = VGG19AutoEncoder.style_blend(activation_content,
-                                                               activation_style_a,
-                                                               activation_style_b,
-                                                               alpha_content,
-                                                               alpha_a,
-                                                               alpha_b)
+            blended_activations = VGG19AutoEncoder.style_blend(
+                activation_content,
+                activation_style_a,
+                activation_style_b,
+                alpha_content,
+                alpha_a,
+                alpha_b)
             blended_image = final_layer(decoder(blended_activations))
             blended_image = self.enhance_contrast(blended_image)
             x = blended_image
@@ -246,9 +193,10 @@ class VGG19AutoEncoder(tf.keras.Model):
 
             activation_content = encoder(tf.constant(x))
             activation_style = encoder(tf.constant(style_image))
-            colored_activations = VGG19AutoEncoder.wct_from_cov(activation_content,
-                                                                activation_style,
-                                                                alpha_style)
+            colored_activations = VGG19AutoEncoder.wct_from_cov(
+                activation_content,
+                activation_style,
+                alpha_style)
             colored_image = final_layer(decoder(colored_activations))
             colored_image = self.enhance_contrast(colored_image)
             x = colored_image
@@ -350,8 +298,9 @@ class VGG19AutoEncoder(tf.keras.Model):
         activations_t = np.transpose(np.squeeze(activations), (2, 0, 1))
         shape_C_H_W = activations_t.shape
         # CxHxW -> CxH*W
-        activations_flat = activations_t.reshape(-1,
-                                                 activations_t.shape[1]*activations_t.shape[2])
+        activations_flat = activations_t.reshape(
+            -1,
+            activations_t.shape[1]*activations_t.shape[2])
         channel_means = activations_flat.mean(axis=1, keepdims=True)
         # Zero mean
         activations_flat_zero_mean = activations_flat - channel_means
@@ -375,7 +324,12 @@ class VGG19AutoEncoder(tf.keras.Model):
         )
 
     @staticmethod
-    def style_blend(content, style_a, style_b, alpha_content, alpha_a, alpha_b):
+    def style_blend(content,
+                    style_a,
+                    style_b,
+                    alpha_content,
+                    alpha_a,
+                    alpha_b):
         content = content.numpy()
         style_a = style_a.numpy()
         style_b = style_b.numpy()
@@ -482,22 +436,24 @@ IMAGES_TO_RECONSTRUCT = [
 ]
 
 
+# %% [markdown]
+# ## [1 Points] Show a few images and their reconstructions using each decoder. Comment on any artifacts from the images. For full credit, the decoding of the images should look similar and the performance should be discussed.
+#
+
+
 # %%
+
 AE.show_reconstructions(IMAGES_TO_RECONSTRUCT)
 
-
 # %% [markdown]
-# ## Reconstructions using different decoders
-#
 # - The decoders Block1_Model and Block2_Model perform very well and the reconstructed images are hard to tell apart from the original.
 # - The decoder Block3_Model shows slight decolorization and show some grid like artifacts.
 # - The earlier layers have gone through less convolutions, their information is less 'distilled' and closer to the original image, thus the decoders have an easier time reconstructing the image.
 # - The artifacts are probably the result of the way the decoder upsamples.
 #     - 'Deconvolution' can cause uneven overlaps, to prevent this the kernel size should be a multiple of the stride.
 #
-
-# %%
-
+# ## [1 Points] Implement the whitening and coloring transform(WCT) as described by Li et al. An implementation of this has already been written for you, available in the link above and in the class master repository.  You should use an SVD decomposition of the covariance(NOT an SVD of the activations).
+#
 
 # %%
 
@@ -520,11 +476,6 @@ tmp = {'style': style_image,
 alphas = {'layer3': 0.8, 'layer2': 0.6, 'layer1': 0.6}
 decoded_images = AE(tmp, alphas=alphas)
 
-# %% [markdown]
-
-# ## Multi style blend
-
-# %%
 imshow(style_image, 'Style')
 for layer in decoded_images.keys():
     plt.figure(figsize=(10, 10))
@@ -532,6 +483,43 @@ for layer in decoded_images.keys():
     imshow(decoded_images[layer][0], 'Styled')
     plt.subplot(1, 2, 2)
     imshow(decoded_images[layer][1], 'Reconstructed')
+
+# %%
+
+content_path = 'images/python.jpg'
+style_path = 'images/starry_style.png'
+
+content_image = load_img(content_path)
+style_image = load_img(style_path)
+
+plt.subplot(1, 2, 1)
+imshow(content_image, 'Content')
+
+plt.subplot(1, 2, 2)
+imshow(style_image, 'Style')
+
+tmp = {'style': style_image,
+       'content': content_image}
+
+alphas = {'layer3': 0.8, 'layer2': 0.6, 'layer1': 0.6}
+decoded_images = AE(tmp, alphas=alphas)
+
+imshow(style_image, 'Style')
+for layer in decoded_images.keys():
+    plt.figure(figsize=(10, 10))
+    plt.subplot(1, 2, 1)
+    imshow(decoded_images[layer][0], 'Styled')
+    plt.subplot(1, 2, 2)
+    imshow(decoded_images[layer][1], 'Reconstructed')
+
+# ## Quality of the stylized images
+# - I don't think these look very good. Color is transferred, and we can later see with the HSV coloring task that 'tone' or 'mood' is also transferred, but way how shapes interact with each other is not transferred.
+# - The reason might be that the encode / decoders only use the shallow parts of VGG, where the lower level features reside. Thus the higher level features / styles are not transferred.
+
+# %% [markdown]
+
+# ## [2 points] When using multiple style images, manipulate the decoder to blend different styles in the reconstruction. That is, use the methods from Li et al. in reconstructing from multiple style images by linearly blending the different outputs from each style-decoded image.
+
 
 # %%
 content_path = 'images/dallas_hall.jpg'
@@ -574,7 +562,11 @@ for i, alpha_set in enumerate(alphas):
            f'A:{alpha_set["alpha_a"]}  B:{alpha_set["alpha_b"]}')
 
 # %% [markdown]
-# ## Masked blend
+# - Works as intended.
+
+
+# %% [markdown]
+# ## [2 points] Perform style transfer with an image mask, where each segmented portion of the image is given a different style. Show a few images with multiple styles applied to the different segmented patches.
 
 # %%
 
@@ -626,7 +618,11 @@ mask_path = 'images/newton_mask.jpg'
 masked_blend(content_path, mask_path, style_a_path, style_b_path)
 
 # %% [markdown]
-# ## HSV color preservation
+# - Works as intended.
+# - The border between the different styles is blended by giving the mask a gaussian blur.
+
+# %% [markdown]
+# ## [2 points] Implement a color preserving style transfer. That is, manipulate the content image to be in HSV space, then style the V channel only. Combine back with the H and S channels using appropriate blurring. Show a few images with and without color preservations to verify that color is preserved better.
 # %%
 
 hsv_cylinder = Image.open('images/HSV.png')
@@ -685,6 +681,10 @@ def color_preserving_transfer(content_path, style_path):
     plt.title('value stylized')
 
 
+# %%
+content_path = 'images/newton.jpg'
+style_path = 'images/Vincent_van_Gogh_Sunflowers.jpg'
+
 color_preserving_transfer(content_path, style_path)
 # %% [markdown]
 
@@ -693,6 +693,13 @@ color_preserving_transfer(content_path, style_path)
 # - Yes, brown is in fact orange, see: https://www.youtube.com/watch?v=wh4aWZRtTwU
 # - The sky is red because white can be anywhere on the hue channel (low saturation and high value makes white), same for the floor
 # - The sky has red/green blocks probably due to jpeg compression artifacts, since both red and green can show up as white, these artifacts are not apparent in rgb space.
+# - The transferred image seems washed out (which one might argue is part of the style), it does look like the natural effects of shadows and lighting are reduced in the image.
+
+# %% [markdown]
+
+content_path = 'images/doge.jpg'
+style_path = 'images/starry_style.png'
+color_preserving_transfer(content_path, style_path)
 
 # %% [markdown]
 # ## Resources
