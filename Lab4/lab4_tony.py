@@ -174,15 +174,16 @@ def load_checkpoint(file_prefix, gen_func, disc_func):
 # create Utils functions to graph Generator and Discriminator loss
 # function based on Quentin Garrido work (https://github.com/garridoq/gan-guide/blob/master/Virtual%20batch%20normalization.ipynb)
 # 
-def plot_losses(d_real_losses, d_fake_losses, g_losses, a_real_hist = None, a_fake_hist = None, file_prefix = None):
+def plot_losses(d_real_losses, d_fake_losses, d_calc_losses, g_losses, a_real_hist = None, a_fake_hist = None, file_prefix = None):
     # plot loss
 	#plt.subplot(2, 1, 1)
     plt.plot(d_real_losses, label='d-real')
     plt.plot(d_fake_losses, label='d-fake')
+    plt.plot(d_calc_losses, label='d-calc')
     plt.plot(g_losses, label='gen')
     plt.legend()
-    plt.show()
     plt.savefig(f'models/gan_models/{file_prefix}_images.png')
+    plt.show()
 
 	# plot discriminator accuracy
 	#plt.subplot(2, 1, 2)
@@ -411,6 +412,7 @@ real_image_numpy = np.transpose(torchvision.utils.make_grid(
 g_losses = []
 d_real_losses = []
 d_fake_losses = []
+d_calc_losses = []
 a_real_losses = []
 a_fake_losses = []
 
@@ -419,9 +421,8 @@ a_fake_losses = []
 # Something like: train_step(g, d, imgs, loss_select=MSE, num_d_steps=1)
 
 run_from_checkpoint = False
-if not run_from_checkpoint:
-    loaded_ims = []
-else:
+loaded_ims = []
+if run_from_checkpoint:
     loaded_ims, generator, discriminator = load_checkpoint(f'ls_{EPOCHS}e_{batch_size}b',
                                                            Generator,
                                                            Discriminator)
@@ -437,6 +438,7 @@ for step in range(iterations):
     running_g_loss = 0.0
     running_d_real_loss = 0.0
     running_d_fake_loss = 0.0
+    running_d_calc_loss = 0.0
     correct = 0
     total = 0
 
@@ -507,16 +509,17 @@ for step in range(iterations):
         # this takes the average of MSE(real images labeled as real) + MSE(fake images labeled as fake)
         d_real_loss = adversarial_loss(discriminator(combined_images[:batch_size]), labels[:batch_size])
         d_fake_loss = adversarial_loss(discriminator(combined_images[batch_size:]), labels[batch_size:])
-        d_loss = (d_real_loss + d_fake_loss) / 2
+        d_calc_loss = (d_real_loss + d_fake_loss) / 2
         
         # Saving the loss from both real and fake images to graph later
         running_d_real_loss += d_real_loss.item()
         running_d_fake_loss += d_fake_loss.item()
+        running_d_calc_loss += d_calc_loss.item()
 
         # TODO: Determine the "accuracy" of the discriminator
 
         # get gradients according to loss above
-        d_loss.backward()
+        d_calc_loss.backward()
         # optimize the discriminator parameters to better classify images
         discriminator_optimizer.step()
 
@@ -530,11 +533,12 @@ for step in range(iterations):
     train_g_loss = running_g_loss/len(dataloader)
     train_d_real_loss = running_d_real_loss/len(dataloader)
     train_d_fake_loss = running_d_fake_loss/len(dataloader)
-    train_d = (train_d_real_loss + train_d_fake_loss) / 2.0
+    train_d_calc_loss = running_d_calc_loss/len(dataloader)
 
     g_losses.append(train_g_loss)
     d_real_losses.append(train_d_real_loss)
     d_fake_losses.append(train_d_fake_loss)
+    d_calc_losses.append(train_d_calc_loss)
     #accuracy = correct/total
 
     # Occasionally save / plot
@@ -545,7 +549,7 @@ for step in range(iterations):
         # Print metrics
         # TODO: d_loss and g_loss are the loss for the very last image inthe batch, not the epoch
         print('Loss at step %s: D(z_c)=%s, D(G(z_mis))=%s' %
-              (total_steps, train_d, train_g_loss))
+              (total_steps, train_d_calc_loss, train_g_loss))
         # save images in a list for display later
         with torch.no_grad():
             fake_output = generator(fixed_random_latent_vectors).detach().cpu()
@@ -571,19 +575,22 @@ for step in range(iterations):
 #   "The loss for the discriminator is expected to rapidly decrease to a value close to zero where it remains during training."
 #   The loss for the generator is expected to either decrease to zero or continually decrease during training."
 #   The generator is expected to produce extremely low-quality images that are easily identified as fake by the discriminator.""
-plot_losses(d_real_losses, d_fake_losses, g_losses, f'ls_{EPOCHS}e_{batch_size}b')
+plot_losses(d_real_losses, d_fake_losses, d_calc_losses, g_losses, file_prefix=f'ls_{EPOCHS}e_{batch_size}b')
 
 # %%
-save_checkpoint(img_list, loaded_ims, generator, discriminator, f'ls_{EPOCHS}e_{batch_size}b')
+save_checkpoint(img_list, loaded_ims, generator, discriminator, file_prefix=f'ls_{EPOCHS}e_{batch_size}b')
 
 # %%
 # Load up a run, if you want
 #ims, generator, discriminator = load_checkpoint('ls', Generator, Discriminator)
 
 # %%
+loaded_ims, generator, discriminator = load_checkpoint(f'ls_{EPOCHS}e_{batch_size}b',
+                                                           Generator,
+                                                           Discriminator)
 fig = plt.figure(figsize=(12, 4))
 plt.axis("off")
-pls = [[plt.imshow(norm_grid(im), animated=True)] for im in ims]
+pls = [[plt.imshow(norm_grid(im), animated=True)] for im in loaded_ims]
 ani = animation.ArtistAnimation(
     fig, pls, interval=500, repeat_delay=1000, blit=True)
 HTML(ani.to_jshtml())
@@ -735,16 +742,15 @@ real_image_numpy = np.transpose(torchvision.utils.make_grid(
 g_losses = []
 d_real_losses = []
 d_fake_losses = []
+d_calc_losses = []
 a_real_losses = []
 a_fake_losses = []
 
 
 #   we can continue a longer training run.
 run_from_checkpoint = False
-if not run_from_checkpoint:
-    loaded_ims = []
-    total_steps = 0
-else:
+loaded_ims = []
+if run_from_checkpoint:
     loaded_ims, generator, discriminator = load_checkpoint(f'wgan_{EPOCHS}e_{batch_size}b',
                                                            Generator,
                                                            WGCritic)
@@ -764,6 +770,7 @@ for step in range(iterations):
     running_g_loss = 0.0
     running_d_real_loss = 0.0
     running_d_fake_loss = 0.0
+    running_d_calc_loss = 0.0
     correct = 0
     total = 0
     
@@ -793,14 +800,15 @@ for step in range(iterations):
         # minimize this,
         d_real_loss = torch.mean(discriminator(real_images))
         d_fake_loss = torch.mean(discriminator(generated_images))
-        d_loss = -d_real_loss + d_fake_loss + lambda_gp * gradient_penalty
+        d_calc_loss = -d_real_loss + d_fake_loss + lambda_gp * gradient_penalty
 
         # Saving the loss from both real and fake images to graph later
         running_d_real_loss += d_real_loss.item()
         running_d_fake_loss += d_fake_loss.item()
+        running_d_calc_loss += d_calc_loss.item()
 
         # get gradients according to loss above
-        d_loss.backward()
+        d_calc_loss.backward()
         # optimize the discriminator parameters to better classify images
         discriminator_optimizer.step()
 
@@ -838,11 +846,12 @@ for step in range(iterations):
     train_g_loss = running_g_loss/len(dataloader)
     train_d_real_loss = running_d_real_loss/len(dataloader)
     train_d_fake_loss = running_d_fake_loss/len(dataloader)
-    train_d = -train_d_real_loss + train_d_fake_loss + lambda_gp * gradient_penalty
+    train_d_calc_loss = running_d_calc_loss/len(dataloader)
 
     g_losses.append(train_g_loss)
     d_real_losses.append(train_d_real_loss)
     d_fake_losses.append(train_d_fake_loss)
+    d_calc_losses.append(train_d_calc_loss)
     #accuracy = correct/total
 
     # Occasionally save / plot
@@ -852,7 +861,7 @@ for step in range(iterations):
 
         # Print metrics
         print('Loss at step %s: D(z_c)=%s, D(G(z_mis))=%s' %
-              (total_steps, train_d.item(), train_g_loss))
+              (total_steps, train_d_calc_loss, train_g_loss))
         # save images in a list for display later
         with torch.no_grad():
             fake_output = generator(fixed_random_latent_vectors).detach().cpu()
@@ -862,7 +871,7 @@ for step in range(iterations):
         save_checkpoint(img_list, loaded_ims, generator, discriminator, f'wgan_{EPOCHS}e_{batch_size}b')
 
 # %%
-plot_losses(d_real_losses, d_fake_losses, g_losses, f'wgan_{EPOCHS}e_{batch_size}b')
+plot_losses(d_real_losses, d_fake_losses, d_calc_losses, g_losses, file_prefix=f'wgan_{EPOCHS}e_{batch_size}b')
 
 # %%
 #ims, generator, discriminator = load_checkpoint('wgan', Generator, WGCritic)
