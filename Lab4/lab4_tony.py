@@ -37,9 +37,9 @@ torch.manual_seed(seed)
 
 # %%
 
-EPOCHS = 1000
+EPOCHS = 20
 # might try to use large batches (we will discuss why later when we talk about BigGAN)
-batch_size = 1250
+batch_size = 250
 # NOTE: the batch_size should be an integer divisor of the data set size  or torch
 # will give you an error regarding batch sizes of "0" when the data loader tries to
 # load in the final batch
@@ -877,11 +877,17 @@ plot_losses(d_real_losses, d_fake_losses, d_calc_losses, g_losses, file_prefix=f
 #ims, generator, discriminator = load_checkpoint('wgan', Generator, WGCritic)
 
 # %%
+loaded_ims, generator, discriminator = load_checkpoint(f'wgan_{EPOCHS}e_{batch_size}b',
+                                                           Generator,
+                                                           Discriminator)
+
 fig = plt.figure(figsize=(12, 4))
 plt.axis("off")
-pls = [[plt.imshow(norm_grid(im), animated=True)] for im in ims]
+pls = [[plt.imshow(norm_grid(im), animated=True)] for im in loaded_ims]
 ani = animation.ArtistAnimation(
     fig, pls, interval=500, repeat_delay=1000, blit=True)
 HTML(ani.to_jshtml())
+
+# %%
 
 # %%
