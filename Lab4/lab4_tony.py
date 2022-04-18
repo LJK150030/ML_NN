@@ -12,6 +12,7 @@ import random
 import torch
 import torch.nn as nn
 import torch.nn.parallel
+import torch.nn.functional
 import torch.backends.cudnn as cudnn
 import torch.optim as optim
 import torch.utils.data
@@ -38,7 +39,7 @@ torch.manual_seed(seed)
 
 # %%
 
-EPOCHS = 1000
+EPOCHS = 30
 # might try to use large batches (we will discuss why later when we talk about BigGAN)
 batch_size = 250
 # NOTE: the batch_size should be an integer divisor of the data set size  or torch
@@ -916,7 +917,7 @@ HTML(ani.to_jshtml())
 # and rinse and repeat. Using 100 epochs with a batch size of 250, enabiling these lines caused the generator to have a loss of 10, and the discriminator to 0, 
 # while disabiling these lines caused the generator and discriminator to have a loss of -4.
 #
-# Attempted 2, only using Goodfellow's tensorflow based code (https://github.com/openai/improved-gan/blob/4f5d1ec5c16a7eceb206f42bfc652693601e1d5c/imagenet/model.py#L147) from lines 554-648.
+# Attempted 2, only using Goodfellow's tensorflow based code (https://github.com/openai/improved-gan/blob/4f5d1ec5c16a7eceb206f42bfc652693601e1d5c/imagenet/model.py#L554) from lines 554-648.
 # After rereading the paper and looking at the codebase, Goodfellow means that the statstics are based on both the refrence batch and the current batch. We can see in lines 591 and 592 he is
 # saving the the statstics from the very first batch. Then, 616-625, he is using a weighted average based on the current batch number for the new statistics and the refrence statistics. This gives the
 # effect of weighing the first batches stastics more heviely than the new batch. As we process more batches, the refrence batch logorithmicly decase in importance, while the new batch's statsics becomes
@@ -931,8 +932,14 @@ class VBN(nn.Module):
         self.features = incoming_features
         self.scaling_factor = nn.Parameter(torch.ones(incoming_features))
         self.bias = nn.Parameter(torch.zeros(incoming_features))
-        self.refrence_mean = None
-        self.refrence_variance = None
+
+        # Get the first batch of images stright from the dataloader
+        self.refrence_batch = next(iter(dataloader))[0]
+
+        # This mean and var cal is diffrent in that we need to reduce the batch and channels to 1
+        self.refrence_mean = torch.mean(self.refrence_batch, dim=(0, 1), keepdim=True)
+        self.refrence_variance = torch.var(self.refrence_batch, dim=(0, 1), keepdim=True)
+
         self.epsilon = epsilon
         self.current_batch = 0
 
@@ -964,24 +971,22 @@ class VBN(nn.Module):
         out = None
         self.current_batch = self.current_batch + 1.0
         # Check if this is the first epoch, and if so, calcaultate the mean and variance for the first batch
-        if self.refrence_mean is not None or self.refrence_variance is not None:
-            new_coeff = 1.0 / self.current_batch
-            old_coeff = 1.0 - new_coeff
+        old_coeff = 1.0 / self.current_batch
+        new_coeff = 1.0 - old_coeff
+        
+        new_mean, new_variance = self.batch_stats(x)
+        
+        # Need to downsample our mean and variance depending on the input
+        refrence_mean_subsample = torch.nn.functional.interpolate(input = self.refrence_mean,
+                                                                    size = x.shape[2:4],
+                                                                    mode = 'bilinear')
+        refrence_var_subsample = torch.nn.functional.interpolate(input = self.refrence_variance,
+                                                                    size = x.shape[2:4],
+                                                                    mode = 'bilinear')
 
-            new_mean, new_variance = self.batch_stats(x)
-            calc_mean = new_coeff * new_mean + old_coeff * self.refrence_mean
-            calc_variance = new_coeff * new_variance + old_coeff * self.refrence_variance
-            out = self.normalize(x, calc_mean, calc_variance)
-
-        else:
-            self.refrence_mean, self.refrence_variance = self.batch_stats(x)
-
-            # Freeze these values so we can use them for the remaining batches
-            self.refrence_mean = self.refrence_mean.clone().detach()
-            self.refrence_variance = self.refrence_variance.clone().detach()
-
-            # Normalize the batch with the calculated refrence mean and variance
-            out = self.normalize(x, self.refrence_mean, self.refrence_variance)
+        calc_mean = new_coeff * new_mean + old_coeff * refrence_mean_subsample
+        calc_variance = new_coeff * new_variance + old_coeff * refrence_var_subsample
+        out = self.normalize(x, calc_mean, calc_variance)
 
         return out
 
@@ -995,8 +1000,7 @@ class Generator_VBN(nn.Module):
 
         # First, transform the input into a 8x8 128-channels feature map
         self.init_size = width // 4  # one quarter the image size
-        self.l1 = nn.Sequential(
-            nn.Linear(latent_dim, 128 * self.init_size ** 2))
+        self.l1 = nn.Sequential(nn.Linear(latent_dim, 128 * self.init_size ** 2))
         # there is no reshape layer, this will be done in forward function
         # alternately we could us only the functional API
         # and bypass sequential altogether
@@ -1005,29 +1009,25 @@ class Generator_VBN(nn.Module):
         # in order to create some blocks
         self.conv_blocks = nn.Sequential(
             VBN(128),
-            nn.Upsample(scale_factor=2, mode='bilinear',
-                        align_corners=False),  # 16x16
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),  # 16x16
             nn.Conv2d(128, 128, 3, padding=1),  # 16x16
 
             # Then, add a convolution layer
-            nn.Conv2d(in_channels=128, out_channels=128,
-                      kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=128, out_channels=128,kernel_size=3, padding=1),
             VBN(128),
             nn.ReLU(),
 
             # Upsample to 32x32
             # Transpose is not causing problems, but is slowing down because stride default 1
-            nn.Upsample(scale_factor=2, mode='bilinear',
-                        align_corners=False),  # 32x32
-            nn.Conv2d(in_channels=128, out_channels=64,
-                      kernel_size=3, padding=1),
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),  # 32x32
+            nn.Conv2d(in_channels=128, out_channels=64, kernel_size=3, padding=1),
             #nn.ConvTranspose2d(128, 64, 3, padding=1),
             VBN(64),
             nn.ReLU(),
 
             # Produce a 32x32xRGB-channel feature map
             nn.Conv2d(64, channels, kernel_size=3, padding=1),
-            nn.Tanh(),
+            nn.Tanh()
         )
 
     def forward(self, z):
