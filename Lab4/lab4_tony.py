@@ -3,6 +3,7 @@
 # https://pytorch.org/tutorials/beginner/dcgan_faces_tutorial.html
 
 # %%
+from ast import Not
 from pathlib import Path
 
 
@@ -11,6 +12,7 @@ import random
 import torch
 import torch.nn as nn
 import torch.nn.parallel
+import torch.nn.functional
 import torch.backends.cudnn as cudnn
 import torch.optim as optim
 import torch.utils.data
@@ -24,6 +26,7 @@ from torch.autograd import Variable
 
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+import matplotlib.patches as mpatches
 from IPython.display import HTML
 
 # Seed control, for better reproducibility
@@ -36,12 +39,17 @@ torch.manual_seed(seed)
 
 # %%
 
-EPOCHS = 100
+EPOCHS = 30
 # might try to use large batches (we will discuss why later when we talk about BigGAN)
 batch_size = 250
 # NOTE: the batch_size should be an integer divisor of the data set size  or torch
 # will give you an error regarding batch sizes of "0" when the data loader tries to
 # load in the final batch
+
+# ims has been used, and only works when save file or load file has been call.
+# Thus it is now a global variable. 
+ims = None
+
 
 if torch.cuda.is_available():
     device = torch.device("cuda:0")
@@ -157,12 +165,36 @@ def load_checkpoint(file_prefix, gen_func, disc_func):
 
     # now populate the weights from a previous training
     checkpoint = torch.load(f'models/gan_models/{file_prefix}_gen.pth')
-    generator.load_state_dict(checkpoint['state_dict'])
+    generator.load_state_dict(checkpoint['state_dict'], strict=False)
 
     checkpoint = torch.load(f'models/gan_models/{file_prefix}_dis.pth')
-    discriminator.load_state_dict(checkpoint['state_dict'])
+    discriminator.load_state_dict(checkpoint['state_dict'], strict=False)
 
     return ims, generator, discriminator
+
+# %%
+# create Utils functions to graph Generator and Discriminator loss
+# function based on Quentin Garrido work (https://github.com/garridoq/gan-guide/blob/master/Virtual%20batch%20normalization.ipynb)
+# 
+def plot_losses(d_real_losses, d_fake_losses, d_calc_losses, g_losses, a_real_hist = None, a_fake_hist = None, file_prefix = None):
+    # plot loss
+	#plt.subplot(2, 1, 1)
+    plt.plot(d_real_losses, label='d-real')
+    plt.plot(d_fake_losses, label='d-fake')
+    plt.plot(d_calc_losses, label='d-calc')
+    plt.plot(g_losses, label='gen')
+    plt.legend()
+    plt.savefig(f'models/gan_models/{file_prefix}_images.png')
+    plt.show()
+
+	# plot discriminator accuracy
+	#plt.subplot(2, 1, 2)
+	#plt.plot(a_real_hist, label='acc-real')
+	#plt.plot(a_fake_hist, label='acc-fake')
+	#plt.legend()
+	# save plot to file
+	#plt.close()
+    
 
 
 # %% [markdown]
@@ -378,25 +410,41 @@ real_image_numpy = np.transpose(torchvision.utils.make_grid(
 # because we have changed the adversarial loss function
 # Start training loop
 
+# saving generator and discriminator losses for each epoch
+g_losses = []
+d_real_losses = []
+d_fake_losses = []
+d_calc_losses = []
+a_real_losses = []
+a_fake_losses = []
+
 # Because not much is changing, an interesting update would
 # be to write a "train step" function and use it here.
 # Something like: train_step(g, d, imgs, loss_select=MSE, num_d_steps=1)
 
 run_from_checkpoint = False
-if not run_from_checkpoint:
-    loaded_ims = []
-else:
-    loaded_ims, generator, discriminator = load_checkpoint('ls',
+loaded_ims = []
+if run_from_checkpoint:
+    loaded_ims, generator, discriminator = load_checkpoint(f'ls_{EPOCHS}e_{batch_size}b',
                                                            Generator,
                                                            Discriminator)
     # can get previous steps based on saved checkpoints
     total_steps = loaded_ims.shape[0]*10
 
+# For each EPOCH
 for step in range(iterations):
     total_steps = total_steps+1
     generator.train()
     discriminator.train()
 
+    running_g_loss = 0.0
+    running_d_real_loss = 0.0
+    running_d_fake_loss = 0.0
+    running_d_calc_loss = 0.0
+    correct = 0
+    total = 0
+
+    # For each batch size
     for i, imgs in enumerate(dataloader):
 
         imgs = imgs[0]
@@ -422,6 +470,11 @@ for step in range(iterations):
         # want generator output to generate images that are "close" to all "ones"
         g_loss = adversarial_loss(discriminator(
             generated_images), misleading_targets)
+        
+        # Saving g_loss to graph later
+        running_g_loss += g_loss.item()
+
+        # TODO: Determine the "accuracy" of the generator
 
         # now back propagate to get derivatives
         g_loss.backward()
@@ -435,6 +488,7 @@ for step in range(iterations):
 
         # Zero out any previous calculated gradients
         discriminator_optimizer.zero_grad()
+        
 
         # Combine real images with some generator images
         real_images = Variable(imgs.type(Tensor))
@@ -455,14 +509,19 @@ for step in range(iterations):
 
         # Setup Discriminator loss
         # this takes the average of MSE(real images labeled as real) + MSE(fake images labeled as fake)
-        d_loss = (
-            adversarial_loss(discriminator(combined_images[:batch_size]), labels[:batch_size]) +
-            adversarial_loss(discriminator(
-                combined_images[batch_size:]), labels[batch_size:])
-        ) / 2
+        d_real_loss = adversarial_loss(discriminator(combined_images[:batch_size]), labels[:batch_size])
+        d_fake_loss = adversarial_loss(discriminator(combined_images[batch_size:]), labels[batch_size:])
+        d_calc_loss = (d_real_loss + d_fake_loss) / 2
+        
+        # Saving the loss from both real and fake images to graph later
+        running_d_real_loss += d_real_loss.item()
+        running_d_fake_loss += d_fake_loss.item()
+        running_d_calc_loss += d_calc_loss.item()
+
+        # TODO: Determine the "accuracy" of the discriminator
 
         # get gradients according to loss above
-        d_loss.backward()
+        d_calc_loss.backward()
         # optimize the discriminator parameters to better classify images
         discriminator_optimizer.step()
 
@@ -472,34 +531,68 @@ for step in range(iterations):
 
         # ===================================
 
+    # Calculate this epoch's loss and accuracy
+    train_g_loss = running_g_loss/len(dataloader)
+    train_d_real_loss = running_d_real_loss/len(dataloader)
+    train_d_fake_loss = running_d_fake_loss/len(dataloader)
+    train_d_calc_loss = running_d_calc_loss/len(dataloader)
+
+    g_losses.append(train_g_loss)
+    d_real_losses.append(train_d_real_loss)
+    d_fake_losses.append(train_d_fake_loss)
+    d_calc_losses.append(train_d_calc_loss)
+    #accuracy = correct/total
+
     # Occasionally save / plot
     if step % 10 == 0:
         generator.eval()
         discriminator.eval()
 
         # Print metrics
+        # TODO: d_loss and g_loss are the loss for the very last image inthe batch, not the epoch
         print('Loss at step %s: D(z_c)=%s, D(G(z_mis))=%s' %
-              (total_steps, d_loss.item(), g_loss.item()))
+              (total_steps, train_d_calc_loss, train_g_loss))
         # save images in a list for display later
         with torch.no_grad():
             fake_output = generator(fixed_random_latent_vectors).detach().cpu()
         img_list.append(torchvision.utils.make_grid(
             fake_output, padding=2, normalize=True, nrow=5))
 
-        save_checkpoint(img_list, loaded_ims, generator, discriminator, 'ls')
-
+        save_checkpoint(img_list, loaded_ims, generator, discriminator, f'ls_{EPOCHS}e_{batch_size}b')
 
 # %%
-save_checkpoint(img_list, loaded_ims, generator, discriminator, 'ls')
+# According to Dr. Jason Browniee (https://machinelearningmastery.com/practical-guide-to-gan-failure-modes/)
+#   "Discriminator loss on real and fake images is expected to sit around 0.5"
+#   "Generator loss on fake images is expected to sit between 0.5 and perhaps 2.0"
+#   "Discriminator accuracy on real and fake images is expected to sit around 80%"
+#   "Variance of generator and discriminator loss is expected to remain modest."
+#   "The generator is expected to produce its highest quality images during a period of stability."
+#   "Training stability may degenerate into periods of high-variance loss and corresponding lower quality generated images."
+#
+# Dr. Jason Browniee also suggests that mode collapse occurse when:
+#   "The loss for the generator, and probably the discriminator, is expected to oscillate over time."
+#   "The generator model is expected to generate identical output images from different points in the latent space."
+#
+# Finaly, Dr. Jason Browniee notes the properties of a convergence failer as:
+#   "The loss for the discriminator is expected to rapidly decrease to a value close to zero where it remains during training."
+#   The loss for the generator is expected to either decrease to zero or continually decrease during training."
+#   The generator is expected to produce extremely low-quality images that are easily identified as fake by the discriminator.""
+plot_losses(d_real_losses, d_fake_losses, d_calc_losses, g_losses, file_prefix=f'ls_{EPOCHS}e_{batch_size}b')
+
+# %%
+save_checkpoint(img_list, loaded_ims, generator, discriminator, file_prefix=f'ls_{EPOCHS}e_{batch_size}b')
 
 # %%
 # Load up a run, if you want
-ims, generator, discriminator = load_checkpoint('ls', Generator, Discriminator)
+#ims, generator, discriminator = load_checkpoint('ls', Generator, Discriminator)
 
 # %%
+loaded_ims, generator, discriminator = load_checkpoint(f'ls_{EPOCHS}e_{batch_size}b',
+                                                           Generator,
+                                                           Discriminator)
 fig = plt.figure(figsize=(12, 4))
 plt.axis("off")
-pls = [[plt.imshow(norm_grid(im), animated=True)] for im in ims]
+pls = [[plt.imshow(norm_grid(im), animated=True)] for im in loaded_ims]
 ani = animation.ArtistAnimation(
     fig, pls, interval=500, repeat_delay=1000, blit=True)
 HTML(ani.to_jshtml())
@@ -647,12 +740,20 @@ real_image_numpy = np.transpose(torchvision.utils.make_grid(
 
 # %%
 
+# saving generator and discriminator losses for each epoch
+g_losses = []
+d_real_losses = []
+d_fake_losses = []
+d_calc_losses = []
+a_real_losses = []
+a_fake_losses = []
+
+
 #   we can continue a longer training run.
-run_from_checkpoint = True
-if not run_from_checkpoint:
-    loaded_ims = []
-else:
-    loaded_ims, generator, discriminator = load_checkpoint('wgan',
+run_from_checkpoint = False
+loaded_ims = []
+if run_from_checkpoint:
+    loaded_ims, generator, discriminator = load_checkpoint(f'wgan_{EPOCHS}e_{batch_size}b',
                                                            Generator,
                                                            WGCritic)
     # can get previous steps based on saved checkpoints
@@ -667,8 +768,17 @@ for step in range(iterations):
     total_steps = total_steps+1
     generator.train()
     discriminator.train()
-    for i, (imgs, _) in enumerate(dataloader):
 
+    running_g_loss = 0.0
+    running_d_real_loss = 0.0
+    running_d_fake_loss = 0.0
+    running_d_calc_loss = 0.0
+    correct = 0
+    total = 0
+    
+    for i, imgs in enumerate(dataloader):
+
+        imgs = imgs[0]
         # ===================================
         # DISCRIMINATOR OPTIMIZE AND GET LABELS
 
@@ -690,12 +800,17 @@ for step in range(iterations):
             discriminator, real_images.data, generated_images.data)
 
         # minimize this,
-        d_loss = -torch.mean(discriminator(real_images)) + \
-            torch.mean(discriminator(generated_images)) + \
-            lambda_gp * gradient_penalty
+        d_real_loss = torch.mean(discriminator(real_images))
+        d_fake_loss = torch.mean(discriminator(generated_images))
+        d_calc_loss = -d_real_loss + d_fake_loss + lambda_gp * gradient_penalty
+
+        # Saving the loss from both real and fake images to graph later
+        running_d_real_loss += d_real_loss.item()
+        running_d_fake_loss += d_fake_loss.item()
+        running_d_calc_loss += d_calc_loss.item()
 
         # get gradients according to loss above
-        d_loss.backward()
+        d_calc_loss.backward()
         # optimize the discriminator parameters to better classify images
         discriminator_optimizer.step()
 
@@ -714,6 +829,9 @@ for step in range(iterations):
 
             # Adversarial loss from critic
             g_loss = -torch.mean(discriminator(generated_images))
+            
+            # Saving g_loss to graph later
+            running_g_loss += g_loss.item()
 
             # now back propagate to get derivatives
             g_loss.backward()
@@ -721,6 +839,22 @@ for step in range(iterations):
             # use gan optimizer to only update the parameters of the generator
             # this was setup above to only use the params of generator
             gan_optimizer.step()
+        else:
+            g_loss = -torch.mean(discriminator(generated_images))
+            running_g_loss += g_loss.item()
+
+
+    # Calculate this epoch's loss and accuracy
+    train_g_loss = running_g_loss/len(dataloader)
+    train_d_real_loss = running_d_real_loss/len(dataloader)
+    train_d_fake_loss = running_d_fake_loss/len(dataloader)
+    train_d_calc_loss = running_d_calc_loss/len(dataloader)
+
+    g_losses.append(train_g_loss)
+    d_real_losses.append(train_d_real_loss)
+    d_fake_losses.append(train_d_fake_loss)
+    d_calc_losses.append(train_d_calc_loss)
+    #accuracy = correct/total
 
     # Occasionally save / plot
     if step % 10 == 0:
@@ -729,25 +863,383 @@ for step in range(iterations):
 
         # Print metrics
         print('Loss at step %s: D(z_c)=%s, D(G(z_mis))=%s' %
-              (total_steps, d_loss.item(), g_loss.item()))
+              (total_steps, train_d_calc_loss, train_g_loss))
         # save images in a list for display later
         with torch.no_grad():
             fake_output = generator(fixed_random_latent_vectors).detach().cpu()
         img_list.append(torchvision.utils.make_grid(
             fake_output, padding=2, normalize=True, nrow=5))
 
-        save_checkpoint(img_list, loaded_ims, generator, discriminator, 'wgan')
-
-
-# %%
-ims, generator, discriminator = load_checkpoint('wgan', Generator, WGCritic)
+        save_checkpoint(img_list, loaded_ims, generator, discriminator, f'wgan_{EPOCHS}e_{batch_size}b')
 
 # %%
+plot_losses(d_real_losses, d_fake_losses, d_calc_losses, g_losses, file_prefix=f'wgan_{EPOCHS}e_{batch_size}b')
+
+# %%
+#ims, generator, discriminator = load_checkpoint('wgan', Generator, WGCritic)
+
+# %%
+loaded_ims, generator, discriminator = load_checkpoint(f'wgan_{EPOCHS}e_{batch_size}b',
+                                                           Generator,
+                                                           Discriminator)
+
 fig = plt.figure(figsize=(12, 4))
 plt.axis("off")
-pls = [[plt.imshow(norm_grid(im), animated=True)] for im in ims]
+pls = [[plt.imshow(norm_grid(im), animated=True)] for im in loaded_ims]
 ani = animation.ArtistAnimation(
     fig, pls, interval=500, repeat_delay=1000, blit=True)
 HTML(ani.to_jshtml())
+
+
+
+
+
+# %% [markdown]
+# # Virtual Batch Normalization
+#
+# code based on Ian Goodfellow's work 
+# 
+# 
+# Virtual batch normalization (VBN) the statiscitsc, mean and variance., are collected from a refrence batch of exmaples
+# selected at the start of training. The mean and variance are then used for each batch. Goodfellow et. al note that
+# this process is computationally expensive since it has to forward propogate two minibatches of data. Thus they
+# only used it for the generator network. Virtual Batch Normalization follows the equation
+#
+# $ \frac{x - \mathrm{E}[x_{ref}]}{\sqrt{\mathrm{Var}[x_{ref}] + \epsilon}} * \gamma + \beta $
+#
+# where $x$ is the batch to be normalized and $x_{ref}$ is the refrence batch
+#
+# Attempted 1, cross refrecning Goodfellow's code and torchgan's implementation of VBN. (https://torchgan.readthedocs.io/en/latest/_modules/torchgan/layers/virtualbatchnorm.html#VirtualBatchNorm.forward)
+# Peculiar in torchgan's implementation that during the forward function, which idefines the computational performence at every call, they
+# check if the refrence mean and variance is none then they compute them, otherwise they use them but then set them to None. This creates
+# the behvaior of calculating the refrence mean and variance for every odd batch numnber. For example on the first batch we calculate the refrence statistics, and normalize the weight with them. Then on the second batch
+# it normalizes the weights with the first batche's statistics values, and then null the refrence values. Then on the third batch, we recalculate the refrence statstics,
+# and rinse and repeat. Using 100 epochs with a batch size of 250, enabiling these lines caused the generator to have a loss of 10, and the discriminator to 0, 
+# while disabiling these lines caused the generator and discriminator to have a loss of -4.
+#
+# Attempted 2, only using Goodfellow's tensorflow based code (https://github.com/openai/improved-gan/blob/4f5d1ec5c16a7eceb206f42bfc652693601e1d5c/imagenet/model.py#L554) from lines 554-648.
+# After rereading the paper and looking at the codebase, Goodfellow means that the statstics are based on both the refrence batch and the current batch. We can see in lines 591 and 592 he is
+# saving the the statstics from the very first batch. Then, 616-625, he is using a weighted average based on the current batch number for the new statistics and the refrence statistics. This gives the
+# effect of weighing the first batches stastics more heviely than the new batch. As we process more batches, the refrence batch logorithmicly decase in importance, while the new batch's statsics becomes
+# more importatn.
+# %%
+class VBN(nn.Module):
+
+    # Given the input features to normalize and to determine dimenstions, as well as
+    # the epsilon to add to the variance for numerical stability during normilization
+    def __init__(self, incoming_features, epsilon=1e-5):
+        super(VBN, self).__init__()
+        self.features = incoming_features
+        self.scaling_factor = nn.Parameter(torch.ones(incoming_features))
+        self.bias = nn.Parameter(torch.zeros(incoming_features))
+
+        # Get the first batch of images stright from the dataloader
+        self.refrence_batch = next(iter(dataloader))[0]
+
+        # This mean and var cal is diffrent in that we need to reduce the batch and channels to 1
+        self.refrence_mean = torch.mean(self.refrence_batch, dim=(0, 1), keepdim=True)
+        self.refrence_variance = torch.var(self.refrence_batch, dim=(0, 1), keepdim=True)
+
+        self.epsilon = epsilon
+        self.current_batch = 0
+
+    # Determine the statistics of tensor x. Only called during the first epoch
+    def batch_stats(self, x):
+        mean = torch.mean(x, dim=0, keepdim=True)
+        variance = torch.var(x, dim=0, keepdim=True)
+        return mean, variance
+
+    # normalizing tensor x using calculated mean and variance. Only called during the first epoch
+    def normalize(self, x, mean, variance):
+        standard_deviation = torch.sqrt(self.epsilon + variance)
+        x_normalized = (x - mean) / standard_deviation
+        sizes = list(x_normalized.size())
+
+        for dimension, __ in enumerate(x_normalized.size()):
+            if dimension != 1:
+                sizes[dimension] = 1
+        
+        # Unpack the sizes
+        scale = self.scaling_factor.view(*sizes)
+        bias = self.bias.view(*sizes)
+        return x_normalized * scale + bias
+
+    def forward(self, x):
+        # ensure that the size of features matches with the first epoch
+        assert x.size(1) == self.features
+
+        out = None
+        self.current_batch = self.current_batch + 1.0
+        # Check if this is the first epoch, and if so, calcaultate the mean and variance for the first batch
+        old_coeff = 1.0 / self.current_batch
+        new_coeff = 1.0 - old_coeff
+        
+        new_mean, new_variance = self.batch_stats(x)
+        
+        # Need to downsample our mean and variance depending on the input
+        refrence_mean_subsample = torch.nn.functional.interpolate(input = self.refrence_mean,
+                                                                    size = x.shape[2:4],
+                                                                    mode = 'bilinear')
+        refrence_var_subsample = torch.nn.functional.interpolate(input = self.refrence_variance,
+                                                                    size = x.shape[2:4],
+                                                                    mode = 'bilinear')
+
+        calc_mean = new_coeff * new_mean + old_coeff * refrence_mean_subsample
+        calc_variance = new_coeff * new_variance + old_coeff * refrence_var_subsample
+        out = self.normalize(x, calc_mean, calc_variance)
+
+        return out
+
+# Code from Goodfellow et al. paper where they use the VBN in the generator, lines 71-169
+# (https://github.com/openai/improved-gan/blob/master/imagenet/generator.py)
+class Generator_VBN(nn.Module):
+
+    def __init__(self):
+        super(Generator_VBN, self).__init__()
+        # save these two functions
+
+        # First, transform the input into a 8x8 128-channels feature map
+        self.init_size = width // 4  # one quarter the image size
+        self.l1 = nn.Sequential(nn.Linear(latent_dim, 128 * self.init_size ** 2))
+        # there is no reshape layer, this will be done in forward function
+        # alternately we could us only the functional API
+        # and bypass sequential altogether
+
+        # we will use the sequential API
+        # in order to create some blocks
+        self.conv_blocks = nn.Sequential(
+            VBN(128),
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),  # 16x16
+            nn.Conv2d(128, 128, 3, padding=1),  # 16x16
+
+            # Then, add a convolution layer
+            nn.Conv2d(in_channels=128, out_channels=128,kernel_size=3, padding=1),
+            VBN(128),
+            nn.ReLU(),
+
+            # Upsample to 32x32
+            # Transpose is not causing problems, but is slowing down because stride default 1
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),  # 32x32
+            nn.Conv2d(in_channels=128, out_channels=64, kernel_size=3, padding=1),
+            #nn.ConvTranspose2d(128, 64, 3, padding=1),
+            VBN(64),
+            nn.ReLU(),
+
+            # Produce a 32x32xRGB-channel feature map
+            nn.Conv2d(64, channels, kernel_size=3, padding=1),
+            nn.Tanh()
+        )
+
+    def forward(self, z):
+        # call the functions from earlier:
+
+        # expand the sampled z to 8x8
+        out = self.l1(z)
+        out = torch.reshape(
+            out, (out.shape[0], 128, self.init_size, self.init_size))
+        # use the view function to reshape the layer output
+        #  old way for earlier Torch versions: out = out.view(out.shape[0], 128, self.init_size, self.init_size)
+        img = self.conv_blocks(out)
+        return img  
+
+
+# %%
+# Initialize generator and discriminator
+generator = Generator_VBN()  # same generator, with new discriminator
+discriminator = WGCritic()
+
+# params from WGAN-GP paper
+# learning rate
+lr = 0.0001
+beta1 = 0
+beta2 = 0.9
+# number of training steps for discriminator per iter for WGANGP
+n_critic = 5
+# Loss weight for gradient penalty
+lambda_gp = 10
+
+# To stabilize training, we use learning rate decay
+# and gradient clipping (by value) in the optimizer.
+clip_value = 1
+
+# Optimizers, no loss function defined here as
+# will use torch.mean as loss function for WGAN.
+
+
+# discriminator_optimizer = torch.optim.RMSprop(discriminator.parameters(), lr=lr)
+# gan_optimizer = torch.optim.RMSprop(generator.parameters(), lr=lr)
+
+# Use ADAM
+discriminator_optimizer = torch.optim.Adam(discriminator.parameters(),
+                                           lr=lr, betas=(beta1, beta2))
+gan_optimizer = torch.optim.Adam(generator.parameters(),
+                                 lr=lr, betas=(beta1, beta2))
+
+
+iterations = EPOCHS  # defined above
+
+# Sample random points in the latent space
+plot_num_examples = 25
+fixed_random_latent_vectors = torch.randn(
+    plot_num_examples, latent_dim, device=device)
+img_list = []
+total_steps = 0
+
+real_image_numpy = np.transpose(torchvision.utils.make_grid(
+    real_image_examples[:plot_num_examples, :, :, :], padding=2, normalize=False, nrow=5), (0, 1, 2))
+
+
+# %%
+
+# saving generator and discriminator losses for each epoch
+g_losses = []
+d_real_losses = []
+d_fake_losses = []
+d_calc_losses = []
+a_real_losses = []
+a_fake_losses = []
+
+
+#   we can continue a longer training run.
+run_from_checkpoint = False
+loaded_ims = []
+if run_from_checkpoint:
+    loaded_ims, generator, discriminator = load_checkpoint(f'vbn_wgan_{EPOCHS}e_{batch_size}b',
+                                                           Generator,
+                                                           WGCritic)
+    # can get previous steps based on saved checkpoints
+    total_steps = loaded_ims.shape[0]*10
+    # Use ADAM
+    discriminator_optimizer = torch.optim.Adam(discriminator.parameters(),
+                                               lr=lr, betas=(beta1, beta2))
+    gan_optimizer = torch.optim.Adam(generator.parameters(),
+                                     lr=lr, betas=(beta1, beta2))
+
+for step in range(iterations):
+    total_steps = total_steps+1
+    generator.train()
+    discriminator.train()
+
+    running_g_loss = 0.0
+    running_d_real_loss = 0.0
+    running_d_fake_loss = 0.0
+    running_d_calc_loss = 0.0
+    correct = 0
+    total = 0
+    
+    for i, imgs in enumerate(dataloader):
+
+        imgs = imgs[0]
+        # ===================================
+        # DISCRIMINATOR OPTIMIZE AND GET LABELS
+
+        # Zero out any previous calculated gradients
+        discriminator_optimizer.zero_grad()
+
+        # Combine real images with some generator images
+        real_images = Variable(imgs.type(Tensor))
+
+        # Sample random points in the latent space
+        random_latent_vectors = Variable(
+            Tensor(np.random.normal(0, 1, (imgs.shape[0], latent_dim))))
+
+        # Decode them to fake images
+        generated_images = generator(random_latent_vectors)
+
+        # Compute gradient penalty
+        gradient_penalty = compute_gradient_penalty(
+            discriminator, real_images.data, generated_images.data)
+
+        # minimize this,
+        d_real_loss = torch.mean(discriminator(real_images))
+        d_fake_loss = torch.mean(discriminator(generated_images))
+        d_calc_loss = -d_real_loss + d_fake_loss + lambda_gp * gradient_penalty
+
+        # Saving the loss from both real and fake images to graph later
+        running_d_real_loss += d_real_loss.item()
+        running_d_fake_loss += d_fake_loss.item()
+        running_d_calc_loss += d_calc_loss.item()
+
+        # get gradients according to loss above
+        d_calc_loss.backward()
+        # optimize the discriminator parameters to better classify images
+        discriminator_optimizer.step()
+
+        # ===================================
+
+        # ===================================
+        # GENERATOR OPTIMIZE AND GET LABELS
+
+        # Zero out any previous calculated gradients
+        gan_optimizer.zero_grad()
+
+        # Train the generator for every n_critic iterations
+        if i % n_critic == 0:
+            # Decode them to fake images, through the generator
+            generated_images = generator(random_latent_vectors)
+
+            # Adversarial loss from critic
+            g_loss = -torch.mean(discriminator(generated_images))
+            
+            # Saving g_loss to graph later
+            running_g_loss += g_loss.item()
+
+            # now back propagate to get derivatives
+            g_loss.backward()
+
+            # use gan optimizer to only update the parameters of the generator
+            # this was setup above to only use the params of generator
+            gan_optimizer.step()
+        else:
+            g_loss = -torch.mean(discriminator(generated_images))
+            running_g_loss += g_loss.item()
+
+
+    # Calculate this epoch's loss and accuracy
+    train_g_loss = running_g_loss/len(dataloader)
+    train_d_real_loss = running_d_real_loss/len(dataloader)
+    train_d_fake_loss = running_d_fake_loss/len(dataloader)
+    train_d_calc_loss = running_d_calc_loss/len(dataloader)
+
+    g_losses.append(train_g_loss)
+    d_real_losses.append(train_d_real_loss)
+    d_fake_losses.append(train_d_fake_loss)
+    d_calc_losses.append(train_d_calc_loss)
+    #accuracy = correct/total
+
+    # Occasionally save / plot
+    if step % 10 == 0:
+        generator.eval()
+        discriminator.eval()
+
+        # Print metrics
+        print('Loss at step %s: D(z_c)=%s, D(G(z_mis))=%s' %
+              (total_steps, train_d_calc_loss, train_g_loss))
+        # save images in a list for display later
+        with torch.no_grad():
+            fake_output = generator(fixed_random_latent_vectors).detach().cpu()
+        img_list.append(torchvision.utils.make_grid(
+            fake_output, padding=2, normalize=True, nrow=5))
+
+        save_checkpoint(img_list, loaded_ims, generator, discriminator, f'vbn_wgan_{EPOCHS}e_{batch_size}b')
+
+# %%
+plot_losses(d_real_losses, d_fake_losses, d_calc_losses, g_losses, file_prefix=f'vbn_wgan_{EPOCHS}e_{batch_size}b')
+
+# %%
+#ims, generator, discriminator = load_checkpoint('wgan', Generator, WGCritic)
+
+# %%
+loaded_ims, generator, discriminator = load_checkpoint(f'vbn_wgan_{EPOCHS}e_{batch_size}b',
+                                                           Generator,
+                                                           Discriminator)
+
+fig = plt.figure(figsize=(12, 4))
+plt.axis("off")
+pls = [[plt.imshow(norm_grid(im), animated=True)] for im in loaded_ims]
+ani = animation.ArtistAnimation(
+    fig, pls, interval=500, repeat_delay=1000, blit=True)
+HTML(ani.to_jshtml())
+# %%
 
 # %%
