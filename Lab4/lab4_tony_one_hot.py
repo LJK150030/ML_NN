@@ -33,11 +33,11 @@ random.seed(seed)
 np.random.seed(seed)
 torch.manual_seed(seed)
 
-run_from_checkpoint = True
+run_from_checkpoint = False
 
 # %%
 
-EPOCHS = 100
+EPOCHS = 500
 # might try to use large batches (we will discuss why later when we talk about BigGAN)
 batch_size = 250
 # NOTE: the batch_size should be an integer divisor of the data set size  or torch
