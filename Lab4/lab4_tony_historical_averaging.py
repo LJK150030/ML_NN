@@ -1,4 +1,10 @@
 # %% [markdown]
+# # Lab: GAN Example Fixing
+# - Jake Klinkert
+# - Sam Yassien
+# - Hongjin Yu
+
+
 # Compare this implimentation to the one from the official Torch tutorial:
 # https://pytorch.org/tutorials/beginner/dcgan_faces_tutorial.html
 
@@ -435,6 +441,8 @@ def train_and_save(model_name):
             random_latent_vectors = Variable(
                 Tensor(np.random.normal(0, 1, (this_batch_size, latent_dim))))
 
+            # [one_hot_encoding]
+            # generate random class labels
             random_class_label = Variable(
                 IntTensor(np.random.randint(0, num_classes, this_batch_size)))
 
@@ -565,9 +573,39 @@ def load_and_plot(model_name):
 # - We modify the LS-GAN provided by the lab notebook https://github.com/8000net/LectureNotesMaster/blob/master/07c%20GansWithTorch.ipynb
 # - We continue to use cifar10 as this dataset is well known, and the images are relatively small resulting in faster training.
 # - We pick frogs, ships and trucks as our target classes from the dataset.
-# - These three classes have labels 6,8 and 9 in the original dataset. They are reindexed to 0,1,2
-# - The embedding is done via nn.Embedding, this takes in integers instead of a sparse one hot vector to be more space efficient.
-# - The size of the embedding vector is 3. This does not make much sense in our case since we have so few classes. We are fully connecting a size 3 vector to a size 3 vector. The original paper had thousands of chinese characters, and the embedding vector was 
+# - By inspecting the images, we can see that ships and frogs are significantly different, while ships and trucks share several characteristics (blue sky, straight lines)
+# - These three classes have labels 6,8 and 9 in the original dataset. They are reindexed to 0,1,2.
+# - The embedding is done via torch.nn.Embedding, this takes in integers instead of a sparse one hot vector to be more space efficient (does not really matter since we only have 3 classes).
+# - The size of the embedding vector is 3. This does not make much sense in our case since we have so few classes. We are fully connecting a size 3 vector to a size 3 vector. The original paper had thousands of chinese characters, and the embedding vector was significantly lower than that so it made sense in their case.
+# - Both the generator and discriminator have the same architecture for the one-hot embedding layer, but they are inserted into the network at different locations.
+# - For the generator the embedding is concatenated to the first layer (latent vector z).
+# - For the discriminator the embedding is concatenated to the second to last flatted layer, right before the fully connected classification layer.
+# - During training, random classes (ints) are generated from [0,1,2]. This is passed on to the generator (in addition to the randomly generated latent vector z) so that the generator 'hopefully' generates an image from that class.
+# - The discriminator has access to the one hot vector, therefore it 'knows' what class the image *should* be. In the case when a real image is passed in, the correct one hot vector is always passed in. In the case of a fake image, the discriminator can use the one hot vector to help determine if the image was fake / real, forcing the generator to generate images of the correct class (and thus reducing mode collapse to some extent).
 # - Use ctrl+f and search for [one_hot_encoding] to find relevant code segments.
+#### Results
+# - The first 2 rows of the image grid should be frogs (generator was told to generate from class 0)
+# - The next 2 rows of the image grid should be generated ships.
+# - The next 2 rows of the image grid should be generated trucks.
+# - The next 6 rows are real images of frogs, ships and trucks, 2 rows each.
+# - When run for 500 epochs, we notice that there is less mode collapse compared to the original notebook of just frogs.
+# - The background colors do suggest 3 distinct classes (or at least 2), some images have blue skies and blue seas, some have grey roads, some have green leaves etc. The object in most images are still very poorly defined. Some do look like ships with sails but very blurry and open for interpretation.
+# - The classes are not restricted to their respective rows, which suggest that the generator / discriminator is not fully utilizing the one-hot encodings. In later tasks, the class restrictions are followed better.
 
+# %% [markdown] 
+#### [4 points]  Implement one item from the list in the GAN training and generate samples of your dataset images. Explain the method you are using and what you hypothesize will occur with the results.  Train the GAN running for at least 500 epochs. Subjectively, did this improve the generated results? Did training time increase or decrease and by how much? Explain.
+
+# - We implemented Historical Averaging.
+# - The idea is to encourage the Generator to try out different weights at the start (exploration), and gradually taper out and focus on exploitation.
+# - The lecture slides use a moving window average of the weights, we instead use an exponential moving average $w_{average} = w_{average} * decay + w_{current} * (1-decay)$. The general effect should be the same but less memory and computation is used since we only need to store one historical average of the weights instead of a window of them.
+# - For each batch, all parameters of the generator are extracted and flattened via torch.nn.utils.parameters_to_vector.
+# - The 'exploration loss' is the MSE of the current and historical parameters.
+# - This is then **subtracted** from the original loss function, since we want the 'exploration loss' to be large to encourage exploration.
+# - The 'exploration loss' is multiplied by exploration_lambda that gradually decays to zero.
+# - Use ctrl+f and search for [historical_averaging] to find relevant code segments.
+# 
+#### Results
+# - Honestly it is hard to tell if the Historical Averaging made a difference from just looking at the images of the final epochs. The images from the early epochs / exploration phase are very blurry and unstable (across runs) both with and without the Historical Averaging. The model did not suffer from mode collapes in 500 epochs in either case.
+# - As a sanity check that our implementation was indeed doing anything, we flipped the sign of the 'exploration loss' in one experiment to discourage exploration. The result was that the GAN images looked more like random noise, and changed much more slowly, suggesting that the implementation was correct and it was discouraging exploration.
+# - The training time increased slightly, from [X] seconds to [X] seconds for 500 epochs. We are running on a GPU. Historical Averaging is taking the MSE of **all** the generator weights with a historical average, and also updating the historical average every step. The vectors involved are large but the computations are straightforward (add, subtract, multiply) which is exactly what GPUs are good at.
 # %%
