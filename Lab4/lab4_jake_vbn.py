@@ -39,12 +39,13 @@ run_from_checkpoint = False
 do_historical_averaging = False
 
 # [virtual_batch_normalization]
-do_virtual_batch_normalization_gen = True
+do_virtual_batch_normalization_gen = False
 do_virtual_batch_normalization_dis = True
 
-EPOCHS = 50
+EPOCHS = 1000
 # might try to use large batches (we will discuss why later when we talk about BigGAN)
-batch_size = 250
+batch_size = 500
+save_at_every_n_epoch = 100
 # NOTE: the batch_size should be an integer divisor of the data set size  or torch
 # will give you an error regarding batch sizes of "0" when the data loader tries to
 # load in the final batch
@@ -233,6 +234,7 @@ def load_checkpoint(file_prefix, gen_func, disc_func):
 # %%
 
 # [virtual_batch_normalization]
+
 class VBN(nn.Module):
 
     # Given the input features to normalize and to determine dimenstions, as well as
@@ -244,11 +246,13 @@ class VBN(nn.Module):
         self.bias = nn.Parameter(torch.zeros(incoming_features))
 
         # Get the first batch of images stright from the dataloader
-        self.refrence_batch = next(iter(dataloader))[0]
+        #self.refrence_batch = next(iter(dataloader))[0]
 
         # This mean and var cal is diffrent in that we need to reduce the batch and channels to 1
-        self.refrence_mean = torch.mean(self.refrence_batch, dim=(0, 1), keepdim=True)
-        self.refrence_variance = torch.var(self.refrence_batch, dim=(0, 1), keepdim=True)
+        #self.refrence_mean = torch.mean(self.refrence_batch, dim=(0, 1), keepdim=True)
+        #self.refrence_variance = torch.var(self.refrence_batch, dim=(0, 1), keepdim=True)
+        self.refrence_mean = None
+        self.refrence_variance = None
 
         self.epsilon = epsilon
         self.current_batch = 0
@@ -278,28 +282,34 @@ class VBN(nn.Module):
         # ensure that the size of features matches with the first epoch
         assert x.size(1) == self.features
 
-        out = None
         self.current_batch = self.current_batch + 1.0
         # Check if this is the first epoch, and if so, calcaultate the mean and variance for the first batch
         old_coeff = 1.0 / self.current_batch
         new_coeff = 1.0 - old_coeff
         
         new_mean, new_variance = self.batch_stats(x)
+
+        # "renormalizing ref periodicaly" is given to us at each epoch
+        # because the class is reinitalized in the for loop
+        if self.current_batch == 1:
+            self.refrence_mean = new_mean
+            self.refrence_variance = new_variance
+            self.refrence_mean = self.refrence_mean.clone().detach()
+            self.refrence_variance = self.refrence_variance.clone().detach()
         
         # Need to downsample our mean and variance depending on the input
-        refrence_mean_subsample = torch.nn.functional.interpolate(input = self.refrence_mean,
-                                                                    size = x.shape[2:4],
-                                                                    mode = 'bilinear')
-        refrence_var_subsample = torch.nn.functional.interpolate(input = self.refrence_variance,
-                                                                    size = x.shape[2:4],
-                                                                    mode = 'bilinear')
+        #refrence_mean_subsample = torch.nn.functional.interpolate(input = self.refrence_mean,
+        #                                                            size = x.shape[2:4],
+        #                                                            mode = 'bilinear')
+        #refrence_var_subsample = torch.nn.functional.interpolate(input = self.refrence_variance,
+        #                                                            size = x.shape[2:4],
+        #                                                            mode = 'bilinear')
 
-        calc_mean = new_coeff * new_mean + old_coeff * refrence_mean_subsample
-        calc_variance = new_coeff * new_variance + old_coeff * refrence_var_subsample
+        calc_mean = new_coeff * new_mean + old_coeff * self.refrence_mean
+        calc_variance = new_coeff * new_variance + old_coeff * self.refrence_variance
         out = self.normalize(x, calc_mean, calc_variance)
 
         return out
-
 
 # %%
 latent_dim = 32
@@ -706,7 +716,7 @@ for step in range(iterations):
         # ===================================
 
     # Occasionally save / plot
-    if step % 10 == 0:
+    if step % save_at_every_n_epoch == 0:
         generator.eval()
         discriminator.eval()
 
@@ -741,5 +751,6 @@ plt.axis("off")
 pls = [[plt.imshow(norm_grid(im), animated=True)] for im in ims]
 ani = animation.ArtistAnimation(
     fig, pls, interval=500, repeat_delay=1000, blit=True)
+
 HTML(ani.to_jshtml())
 
