@@ -2,6 +2,95 @@
 # Compare this implimentation to the one from the official Torch tutorial:
 # https://pytorch.org/tutorials/beginner/dcgan_faces_tutorial.html
 
+
+# %% [markdown]
+# # Virtual Batch Normalization
+# 
+# In Virtual Batch Normalization (VBN), the mean and variance are collected from the activations of a 
+# reference batch selected at the start of training. The reference mean and variance are then used in the 
+# calculation to normalize the current batch. Compared to Batch Normalization (BN), which calculates the mean 
+# and variance of the activations for the current batch, VBN decouples the output's dependence on the current 
+# batch statistics via the reference batch. Goodfellow et. al note that this process is computationally 
+# expensive since it has to forward propagate two mini-batches of data. Thus they only used it for the 
+# generator network. 
+#
+# Attempt 1,using torchgan's implementation of VBN as a refrence point.
+# (https://torchgan.readthedocs.io/en/latest/_modules/torchgan/layers/virtualbatchnorm.html#VirtualBatchNorm.forward) 
+# Peculiar in torchgan's implementation that during the forward function, which defines the computational 
+# performance at every call, they check if the reference mean and variance is none, then they compute then. 
+# Otherwise, they use statistical values but then set them to None. This creates the behavior of calculating 
+# the reference mean and variance for every odd batch number. For example, we calculate the reference statistics 
+# on the first batch and normalize the weight with them. Then on the second batch, it normalizes the weights 
+# with the first batches statistics values and then nulls the reference values. Then, we recalculate the 
+# reference statistics and rinse and repeat on the third batch. Because of this skip alternating, I bleive that 
+# the model will not be stable. This idea is similar to batch normalization, but normalizing every other batch.
+# Addtionaly, when normalizing the weights, and using values that are not statisticaly relevent to that batch, 
+# this could be just as bad as normalizing the values with random values.
+#
+# NO CODE, BUT USE THE ls_vbng_1000e_500b_images_torchgan.npy TO DEMONSTRATE COLLAPSE   
+#
+# From Attempt 1, it took 54min 40s, roughly 3 minutes longer than LS gans, and the model suffered severealy 
+# to mode collapse. Compapring it to the LS gan, it performed worse. We can see the colors pallets are very 
+# similar per class, but are slightly diffrent when comparing frogs to the transportation. The boat and truck 
+# interestingly look very similar to one another. This makes sense, because both subject objects are metalic, 
+# they have blue skies, and the ocean or road may be gray. This could mean that these images lay close to one
+# another in the laten space. And since the frogs are organic, they are further away.
+#
+# Attempt 2, only using Goodfellow's TensorFlow-based code (https://github.com/openai/improved-gan/blob/4f5d1ec5c16a7eceb206f42bfc652693601e1d5c/imagenet/model.py#L554) 
+# from lines 554-648. After rereading the paper and looking at the codebase, Goodfellow means that the 
+# statistics are based on the reference batch and the current batch. In lines 591 and 592, he saves the 
+# statistics from the very first batch. Then, lines 616-625 use a weighted average based on the current batch 
+# number for the new and reference statistics. This gives the effect of weighing the first batch's statistics 
+# more heavily than the new batch. As we process more batches, the reference batch logarithmically decreases in 
+# importance, while the new batch's statistics become essential.
+# 
+# After further investigation, realized that the reference batch is not a batch of images but rather the 
+# activations from a layer using a batch. It initially took the mean and variance of the first batch of 
+# images and applied those values to the normalization of layer weights. Finding the mean and variance from 
+# the activation makes sense rather than using the images. However, this brings further questions on how 
+# this works with the generator. The generator never uses real images, only randomly sampled vectors in the 
+# latent space. The paper says that VBN can be used for the discriminator and generator, but if we are using 
+# real images, then it seems fitting only to use this for the discriminator. However, they explicitly state 
+# they use VBN for the generator due to "computational expense." Thus, the only reason why  I belive they 
+# titled this method "virtual" BN is to use a mean and variance from a different batch rather than the current. 
+# Doing so could further reduce the output dependency from the current batch and can introduce a 
+# regularization process. As I noted in my first attempt, flipping mean and variance every odd batch does not
+# work. So I belive the weighted average Goodfellow introduces may help.
+#
+# INSERT CODE HERE AND ls_vbng_1000e_500b_images.npy results
+#
+# Results of attempt 2 are much better than attempt 1, and have better color pallets that associate to their
+# class better than the LS gans. The time to run this LS gan with VBN for the generator to 1h 1min 36s, about
+# 10 more minutes compared to the LS gan. It seems that the weighted average for the refreance batch and the
+# current batch helpped. We see more blues and whites for water splashing in the boats, green for the frogs
+# and blues and grays for the trucks. Interestingly, it seems that the display flipped the order of the classes
+# from originaly [Frogs, Boats, Trucks] to [Truck, Boats, Frogs]. Either this is an error in displaying the
+# the images, or our model confused Frogs for Trucks and vise versa.
+#
+# INSERT RESULTS FOR ls_vbnd_1000e_500b_images.npy 
+#
+# Since the Results of attempt 2 of VBN works, we decided to run the model for the descriminator as well. The model
+# ran for 1h 1min 2s, again 10 more minutes longer than LS gans. At epoch 300, it seemed like all three classes had diffrent color pallets, showing there is a diffrence.
+# But at epoch 700, the truck class starts to collaps, and then at epoch 900, all of the classes collapsed.
+# This could be because the discriminator was performing better at fooling the generator with trucks, and as the
+# generator was trying to find a solution, it ruined the other classes in the process.
+#
+# INSERT RESULTS FOR ls_vbngd_1000e_500b_images.npy 
+#
+# Lastly using VBN for both the generator and the discriminator, gives us the fastest stability after epoch 100.
+# Having VBN for both the generator and the discriminator only ran for 1h 3min 8s, adding 12 minutes to the 
+# computation time. With Goodfellows comment on this being computationaly expensive, 12 minutes does not seem
+# to add that much addtional time, compared to the previous models running 10 minutes longer than LS gans.
+# Even with the faster stability, it seems that the model just needs more time to train to generate better
+# images. The generator was climing to a loss of 1, while the disriminator was getting closer to 0. This could
+# mean that the generation of real and fake images are getting better, and harder for the discriminator to tell
+# the diffrencce. In the end, VBN seemes to do best for the generator. Using a weighted average of the refrance
+# batch and the current batch statistics may have moved the weights in a semi uniform direction, thanks to the
+# refance batch, and the current batch stats allowed the model to explore further when close to finishing the
+# epoch.
+
+
+
 # %%
 from pathlib import Path
 from time import time
@@ -39,7 +128,7 @@ run_from_checkpoint = False
 do_historical_averaging = False
 
 # [virtual_batch_normalization]
-do_virtual_batch_normalization_gen = False
+do_virtual_batch_normalization_gen = True
 do_virtual_batch_normalization_dis = True
 
 EPOCHS = 1000
