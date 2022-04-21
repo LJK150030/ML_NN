@@ -190,10 +190,10 @@ HTML(ani.to_jshtml())
 # generator was trying to find a solution, it ruined the other classes in the process.
 
 #%%
-
-# %% [markdown]
 ani = load_and_plot('ls_vbngd_1000e_500b_images.npy', 1)
 HTML(ani.to_jshtml())
+# %% [markdown]
+
 
 #
 # Lastly using VBN for both the generator and the discriminator, gives us the fastest stability after epoch 100.
