@@ -65,9 +65,9 @@ else:
 print(device)
 print(Tensor)
 
-
-
 # %%
+
+
 def imshow(img):
     # custom show in order to display
     # torch tensors as numpy
@@ -110,7 +110,6 @@ subset = torch.utils.data.Subset(dataset, selected_indices)
 
 dataloader = torch.utils.data.DataLoader(subset, batch_size=batch_size,
                                          shuffle=False, num_workers=0)
-
 
 
 # %%
@@ -204,11 +203,9 @@ def load_checkpoint(file_prefix, gen_func, disc_func):
     return ims, generator, discriminator
 
 
-
 # %% [markdown]
 #  # Vanilla Generative Adversarial Networks
 #  In this implementation of GANS, we will use a few of the tricks from F. Chollet and from Salimans et al. In particular, we will add some noise to the labels.
-
 # %%
 latent_dim = 32
 height = 32
@@ -340,6 +337,7 @@ class Discriminator(nn.Module):
 
         validity = self.classification_layer(extended_flattened)
 
+        # feature_matching
         if matching:
             return validity, out
         else:
@@ -382,20 +380,18 @@ def norm_grid(im):
     return im
 
 
-
 # %% [markdown]
 #  We are getting something that is similar to a frog, but also we are seeing a bit of mode collapse. The global properties of a greenish or gray blob surrounded by various background is starting to comes across. However, the finer structure is not doing too well. That is, the legs and details in the background are not present yet.
-# 
+#
 #  To improve this result, there are a number of things we might try such as:
 #  - Using the Radford guided methods (implemented already in 2022)
 #  - Adding more randomization to the optimizer
 #  - Running the discriminator multiple times for each generator update
 #  - Changing the objective function (let's try this one)
-# 
+#
 #  ____
 #  # Least Squares GAN
 #  Actually, the only thing we need to do here is replace the adversarial loss function. Note that we are NOT going to make additions to the architecture where the one hot encoding of the classes (and random classes) are used in both the generator and discriminator. This means that we might see a bit more mode collapse in our implementation.
-
 # %%
 generator = Generator()
 discriminator = Discriminator()
@@ -461,7 +457,7 @@ real_image_numpy = np.transpose(torchvision.utils.make_grid(
 
 
 # %%
-
+% % time
 
 if not run_from_checkpoint:
     loaded_ims = []
@@ -506,8 +502,10 @@ for step in range(iterations):
         # Get MSE Loss function
         # want generator output to generate images that are "close" to all "ones"
 
-        # _, features_real = discriminator(
-        #     real_images, random_class_label, matching=True)
+        # feature_matching
+
+        _, features_real = discriminator(
+            real_images, random_class_label, matching=True)
 
         output, features_fake = discriminator(
             generated_images, random_class_label, matching=True)
@@ -515,9 +513,9 @@ for step in range(iterations):
         features_real = torch.mean(features_real, 0)
         features_fake = torch.mean(features_fake, 0)
 
-        t_loss = adversarial_loss(output, misleading_targets)
-        f_loss = adversarial_loss(features_fake, features_real)
-        g_loss = 0.1* t_loss + f_loss
+        # mse loss minimizing difference between real and fake features
+        #g_loss = adversarial_loss(output, misleading_targets)
+        g_loss = adversarial_loss(features_real, features_fake)
 
         # now back propagate to get derivatives
         g_loss.backward()
@@ -571,7 +569,7 @@ for step in range(iterations):
         # ===================================
 
     # Occasionally save / plot
-    if step % 10 == 0:
+    if step % 100 == 0:
         generator.eval()
         discriminator.eval()
 
@@ -585,23 +583,25 @@ for step in range(iterations):
         img_list.append(torchvision.utils.make_grid(
             fake_output, padding=2, normalize=True, nrow=10))
 
-        save_checkpoint(img_list, loaded_ims, generator, discriminator, 'tl_1000')
-
+        save_checkpoint(img_list, loaded_ims, generator,
+                        discriminator, 'fm_1000e')
 
 
 # %%
-save_checkpoint(img_list, loaded_ims, generator, discriminator, 'suml')
+save_checkpoint(img_list, loaded_ims, generator, discriminator, 'fm_1000e')
 
 
 # %% [markdown]
-# tloss 1000
+# feature matching 1000 epochs
 
 # %%
 # Load up a run, if you want
-ims, generator, discriminator = load_checkpoint('tl_1000', Generator, Discriminator)
+ims, generator, discriminator = load_checkpoint(
+    'fm_1000e', Generator, Discriminator)
 
 
 # %%
+plt.rcParams['animation.embed_limit'] = 2**32
 fig = plt.figure(figsize=(20, 20))
 plt.axis("off")
 pls = [[plt.imshow(norm_grid(im), animated=True)] for im in ims]
@@ -610,78 +610,18 @@ ani = animation.ArtistAnimation(
 HTML(ani.to_jshtml())
 
 # %% [markdown]
-# floss 1000
+# [4 points]  Implement Feature Matching
 
+# - The idea behind feature matching is that similar images should have similar features or statistics that can be leveraged to help with training instability.
+# - The method uses the statictical difference between the real and fake images to nodge the generator to generate images close in their statistical representation to real images.
+# - For each batch, the discriminator is used to extract features vectors of the real images and the fake images generated by the generator.
+# - The mean of the features vectors of the real and fake images are calculated.
+# - The loss function is set to the MSE of the real and fake features.
+# - relevant code segments are marked with [feature_matching] in the code blocks.
+#
+# Results
+# - Trained for 1000 epochs, it took 44 minutes to train on single GPU on an M2 v100x8 node.
+# - The training time increased slightly, from [X] seconds to [X] seconds for the baseline solution.
+# - The feature matching uses the discriminator to extract features from both real and fake images, compute their mean and then compute th MSE loss at each epoch.
+# - The results are still far from great. over the 1000 epochs, images are saved every 100 epochs. At first we can recognise dicersity in the generated images, and the colors and shades match the label images, but the model seems to suffer from mode collapse at the further epochs. The results look unstable between epoch outputs, but this could be due to them being 100 epochs apart.
 # %%
-# Load up a run, if you want
-ims, generator, discriminator = load_checkpoint('fm_1000', Generator, Discriminator)
-
-
-# %%
-fig = plt.figure(figsize=(20, 20))
-plt.axis("off")
-pls = [[plt.imshow(norm_grid(im), animated=True)] for im in ims]
-ani = animation.ArtistAnimation(
-    fig, pls, interval=500, repeat_delay=1000, blit=True)
-HTML(ani.to_jshtml())
-
-# %% [markdown]
-# 0.1 t_loss + f_loss
-
-# %%
-# Load up a run, if you want
-ims, generator, discriminator = load_checkpoint('suml', Generator, Discriminator)
-
-
-# %%
-fig = plt.figure(figsize=(20, 20))
-plt.axis("off")
-pls = [[plt.imshow(norm_grid(im), animated=True)] for im in ims]
-ani = animation.ArtistAnimation(
-    fig, pls, interval=500, repeat_delay=1000, blit=True)
-HTML(ani.to_jshtml())
-
-# %% [markdown]
-# t_loss
-
-# %%
-# Load up a run, if you want
-ims, generator, discriminator = load_checkpoint('tl', Generator, Discriminator)
-
-# %%
-fig = plt.figure(figsize=(20, 20))
-plt.axis("off")
-pls = [[plt.imshow(norm_grid(im), animated=True)] for im in ims]
-ani = animation.ArtistAnimation(
-    fig, pls, interval=500, repeat_delay=1000, blit=True)
-HTML(ani.to_jshtml())
-
-# %% [markdown]
-# f_loss
-
-# %%
-# Load up a run, if you want
-ims, generator, discriminator = load_checkpoint('fm', Generator, Discriminator)
-
-# %%
-fig = plt.figure(figsize=(20, 20))
-plt.axis("off")
-pls = [[plt.imshow(norm_grid(im), animated=True)] for im in ims]
-ani = animation.ArtistAnimation(
-    fig, pls, interval=500, repeat_delay=1000, blit=True)
-HTML(ani.to_jshtml())
-
-
-# %% [markdown]
-#  Well, these results are not exactly a great improvement. Mode collapse is more apparent here as well, but the fine structure of the frogs is also not quite the improvement that we wanted. Looking back through the iterations, there was some indication of more successful generations. Subjectively, the frogs started to show up, but then generation became slightly worse. We could run this code for many more iterations, and that might work in terms of getting the optimizers to create better distributions. But it is not guaranteed.
-# 
-#  Instead, now let's try using a Wasserstein GAN, where we use the gradient penalty as a method of making the discriminator 1-lipschitz (and therefore a valid critic to approximate the earth mover distance).
-# 
-#  ___
-#  # Wasserstein GAN with Gradient Penalty
-#  For this implementation, we need to add functionality to the gradient of the Discriminator to make it a critic. For the most part, we need to add the gradient loss function calculations to match the WGAN-GP.
-
-# %%
-
-
-
