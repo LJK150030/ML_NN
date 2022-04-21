@@ -98,6 +98,7 @@ HTML(ani.to_jshtml())
 ani = load_and_plot('ls_ha_1000e_500b_images.npy')
 HTML(ani.to_jshtml())
 
+# %% [markdown]
 # - Honestly it is hard to tell if the Historical Averaging made a difference from just looking at the images of the final epochs. The images from the early epochs / exploration phase are very blurry and unstable (across runs) both with and without the Historical Averaging. It does seem like with Historical Averaging, earlier epochs are more colorful, with more defined shapes. The model still does suffer from mode collapes in 1000 epochs. The optimal number of epochs seem to be around 300 (scroll 1/3 through the animation)
 # - The training time increased insignificantly, from 51min 46s to 52min 13s for 1000 epochs. We are running on a GPU. Historical Averaging is taking the MSE of **all** the generator weights with a historical average, and also updating the historical average every step. The vectors involved are large but the computations are straightforward (add, subtract, multiply) which is exactly what GPUs are good at.
 
