@@ -72,5 +72,5 @@ Lab1/Data/RafDDownload-A601E80A04D47240A4984BA6FD64C940.zip
 Lab3/Data/*
 Lab3/models/*
 Lab4/data/*
-#Lab4/models/*
+Lab4/models/gan_models/backup/*
 Lab4/local/*
