@@ -5,12 +5,8 @@
 # - Hongjin Yu
 
 
-# Compare this implimentation to the one from the official Torch tutorial:
-# https://pytorch.org/tutorials/beginner/dcgan_faces_tutorial.html
-
 # %%
 from pathlib import Path
-
 
 import numpy as np
 import random
@@ -41,6 +37,7 @@ torch.manual_seed(seed)
 run_from_checkpoint = False
 # [historical_averaging]
 do_historical_averaging = False
+invert_historical_averaging = False
 
 # %%
 
@@ -148,7 +145,9 @@ dataloader = torch.utils.data.DataLoader(tensor_dataset, batch_size=batch_size,
                                          shuffle=False, num_workers=0)
 
 # %%
-def save_checkpoint(new_img_list, loaded_ims, g_model, d_model, file_prefix):
+
+
+def save_checkpoint(new_img_list, loaded_ims, g_model, d_model, file_prefix, real_image_numpy):
     ims = np.array([np.transpose(np.hstack((i, real_image_numpy)), (2, 1, 0))
                    for i in new_img_list])
     # if we have saved images from another run, concatenate and save them here
@@ -176,7 +175,6 @@ def load_checkpoint(file_prefix, gen_func, disc_func):
 
     return ims, generator, discriminator
 
-# %% [markdown]
 
 # %%
 latent_dim = 32
@@ -330,76 +328,66 @@ def norm_grid(im):
     return im
 
 
-# %% [markdown]
-#
-# ____
-# # Least Squares GAN
 # %%
-generator = Generator()
-discriminator = Discriminator()
-
-
-# LSGAN paper says they use ADAM, but follow up papers say RMSProp is slightly better
-#lr = 0.0002
-#betas = (0.5, 0.999)
-
-# To stabilize training, we use learning rate decay
-# and gradient clipping (by value) in the optimizer.
-clip_value = 1.0  # This value will use in the future training process since
-# PyTorch didn't has the feature to set clipvalue for
-# RMSprop optimizer.
-
-# set discriminator learning higher than generator
-discriminator_optimizer = torch.optim.RMSprop(discriminator.parameters(),
-                                              lr=0.0008, weight_decay=1e-8)
-
-gan_optimizer = torch.optim.RMSprop(generator.parameters(),
-                                    lr=0.0004, weight_decay=1e-8)
-
-adversarial_loss = torch.nn.MSELoss()  # mean squared error loss
-
-# [historical_averaging]
-exploration_loss = torch.nn.MSELoss()
-
-generator.apply(weights_init)
-discriminator.apply(weights_init)
-
-generator.to(device)
-discriminator.to(device)
-
-# %%
-iterations = EPOCHS  # defined above
-
-# Sample random points in the latent space
-num_examples_per_class = 20
-plot_num_examples = num_examples_per_class * num_classes
-fixed_random_latent_vectors = torch.randn(
-    plot_num_examples, latent_dim, device=device)
-_labels = []
-for i in range(num_classes):
-    _labels += [i] * num_examples_per_class
-fixed_class_labels = IntTensor(_labels)
-
-img_list = []
-total_steps = 0
-
-example_real_indices = []
-for i in range(num_classes):
-    class_label = selected_classes[i]
-    class_indices = [i for i, label in enumerate(
-        real_label_examples) if label == class_label]
-    class_indices = class_indices[:num_examples_per_class]
-    example_real_indices += class_indices
-
-real_image_numpy = np.transpose(torchvision.utils.make_grid(
-    real_image_examples[example_real_indices, :, :, :], padding=2, normalize=False, nrow=10), (0, 1, 2))
-
-# %%
-
-# %%
-%%time
 
 def train_and_save(model_name):
+    
+    generator = Generator()
+    discriminator = Discriminator()
+
+    # LSGAN paper says they use ADAM, but follow up papers say RMSProp is slightly better
+    #lr = 0.0002
+    #betas = (0.5, 0.999)
+
+    # To stabilize training, we use learning rate decay
+    # and gradient clipping (by value) in the optimizer.
+    clip_value = 1.0  # This value will use in the future training process since
+    # PyTorch didn't has the feature to set clipvalue for
+    # RMSprop optimizer.
+
+    # set discriminator learning higher than generator
+    discriminator_optimizer = torch.optim.RMSprop(discriminator.parameters(),
+                                                lr=0.0008, weight_decay=1e-8)
+
+    gan_optimizer = torch.optim.RMSprop(generator.parameters(),
+                                        lr=0.0004, weight_decay=1e-8)
+
+    adversarial_loss = torch.nn.MSELoss()  # mean squared error loss
+
+    # [historical_averaging]
+    exploration_loss = torch.nn.MSELoss()
+
+    generator.apply(weights_init)
+    discriminator.apply(weights_init)
+    generator.to(device)
+    discriminator.to(device)
+    iterations = EPOCHS  # defined above
+    # Sample random points in the latent space
+    num_examples_per_class = 20
+    plot_num_examples = num_examples_per_class * num_classes
+    fixed_random_latent_vectors = torch.randn(
+        plot_num_examples, latent_dim, device=device)
+    _labels = []
+    for i in range(num_classes):
+        _labels += [i] * num_examples_per_class
+    fixed_class_labels = IntTensor(_labels)
+
+    img_list = []
+    total_steps = 0
+
+    example_real_indices = []
+    for i in range(num_classes):
+        class_label = selected_classes[i]
+        class_indices = [i for i, label in enumerate(
+            real_label_examples) if label == class_label]
+        class_indices = class_indices[:num_examples_per_class]
+        example_real_indices += class_indices
+
+    real_image_numpy = np.transpose(torchvision.utils.make_grid(
+        real_image_examples[example_real_indices, :, :, :], padding=2, normalize=False, nrow=10), (0, 1, 2))
+
+
+    
     if not run_from_checkpoint:
         loaded_ims = []
     else:
@@ -410,8 +398,8 @@ def train_and_save(model_name):
         total_steps = loaded_ims.shape[0]*10
 
     # [historical_averaging]
-    exploration_lambda = 30000
-    exploration_lambda_decay = 0.8
+    exploration_lambda = 3000
+    exploration_lambda_decay = 0.9
     # at this point skip exploration to speed up calculations
     exploration_lambda_eps = 0.01
     historical_parameters = None
@@ -422,7 +410,7 @@ def train_and_save(model_name):
         # [historical_averaging]
         if do_historical_averaging:
             exploration_lambda *= exploration_lambda_decay
-            print(f'epoch = {step}, exploration_lambda = {exploration_lambda}')
+            #print(f'epoch = {step}, exploration_lambda = {exploration_lambda}')
 
         total_steps = total_steps+1
         generator.train()
@@ -461,19 +449,17 @@ def train_and_save(model_name):
 
             # [historical_averaging]
             if do_historical_averaging and exploration_lambda > exploration_lambda_eps:
-                # if exploration_lambda > exploration_lambda_eps:
                 all_params = torch.nn.utils.parameters_to_vector(
                     generator.parameters())
-                # print(all_params.shape)
                 # print(all_params.requires_grad) # note: all_params does and should require params since we will backprop through them
                 detached_parameters = all_params.detach()
                 if historical_parameters == None:
                     historical_parameters = detached_parameters
 
                 e_loss = exploration_loss(all_params, historical_parameters)
-                # print(f'original_loss: {g_loss}')
-                # print(
-                #     f'exploration_loss (bigger means more exploration): {e_loss}')
+                if invert_historical_averaging:
+                    e_loss = - e_loss
+
 
                 g_loss = g_loss - e_loss * exploration_lambda
 
@@ -498,13 +484,6 @@ def train_and_save(model_name):
             # Combine real images with some generator images
             real_images = Variable(imgs.type(Tensor))
             combined_images = torch.cat([real_images, generated_images.detach()])
-
-            combined_class_labels = torch.cat(
-                [real_class_labels, random_class_label])
-            # in the above line, we "detach" the generated images from the generator
-            # this is to ensure that no needless gradients are calculated
-            # those parameters wouldn't be updated (becasue we already defined the optimized parameters)
-            # but they would be calculated here, which wastes time.
 
             # Assemble labels discriminating real from fake images
             # real label, a=1 and fake label, b=0
@@ -549,23 +528,32 @@ def train_and_save(model_name):
             img_list.append(torchvision.utils.make_grid(
                 fake_output, padding=2, normalize=True, nrow=10))
 
-            save_checkpoint(img_list, loaded_ims, generator, discriminator, model_name)
+            save_checkpoint(img_list, loaded_ims, generator,
+                            discriminator, model_name, real_image_numpy)
 
-
-    save_checkpoint(img_list, loaded_ims, generator, discriminator, model_name)
+    save_checkpoint(img_list, loaded_ims, generator,
+                    discriminator, model_name, real_image_numpy)
 
 # %%
-
-# Load up a run, if you want
-
 def load_and_plot(model_name):
     ims, generator, discriminator = load_checkpoint(model_name, Generator, Discriminator)
-    fig = plt.figure(figsize=(20, 20))
+    fig = plt.figure(figsize=(15, 15))
     plt.axis("off")
     pls = [[plt.imshow(norm_grid(im), animated=True)] for im in ims]
     ani = animation.ArtistAnimation(
         fig, pls, interval=500, repeat_delay=1000, blit=True)
-    HTML(ani.to_jshtml())
+    return ani
+
+
+#%%
+%%time
+do_historical_averaging = False
+train_and_save('baseline_one_hot')
+
+#%%
+
+ani = load_and_plot('baseline_one_hot')
+HTML(ani.to_jshtml())
 
 
 # %% [markdown]
@@ -592,20 +580,51 @@ def load_and_plot(model_name):
 # - The background colors do suggest 3 distinct classes (or at least 2), some images have blue skies and blue seas, some have grey roads, some have green leaves etc. The object in most images are still very poorly defined. Some do look like ships with sails but very blurry and open for interpretation.
 # - The classes are not restricted to their respective rows, which suggest that the generator / discriminator is not fully utilizing the one-hot encodings. In later tasks, the class restrictions are followed better.
 
+
+
+
 # %% [markdown] 
 #### [4 points]  Implement one item from the list in the GAN training and generate samples of your dataset images. Explain the method you are using and what you hypothesize will occur with the results.  Train the GAN running for at least 500 epochs. Subjectively, did this improve the generated results? Did training time increase or decrease and by how much? Explain.
 
+# %% [markdown]
 # - We implemented Historical Averaging.
 # - The idea is to encourage the Generator to try out different weights at the start (exploration), and gradually taper out and focus on exploitation.
+# - The hypothesis is that the Generator starts out with really bad weights that produce images that do not look anything like real images (since it is so bad, gradient descent also performs poorly), but by encouraging exploration the model can get to a point where it can start to perform gradient descent in the right direction. The encouragement in exploration might also prevent the generator from mode collapes, especially in early stages of training.
 # - The lecture slides use a moving window average of the weights, we instead use an exponential moving average $w_{average} = w_{average} * decay + w_{current} * (1-decay)$. The general effect should be the same but less memory and computation is used since we only need to store one historical average of the weights instead of a window of them.
 # - For each batch, all parameters of the generator are extracted and flattened via torch.nn.utils.parameters_to_vector.
 # - The 'exploration loss' is the MSE of the current and historical parameters.
 # - This is then **subtracted** from the original loss function, since we want the 'exploration loss' to be large to encourage exploration.
-# - The 'exploration loss' is multiplied by exploration_lambda that gradually decays to zero.
+# - The 'exploration loss' is multiplied by exploration_lambda that gradually decays to zero. exploration_lambda is chosen so the the exploration loss is roughly on par with the original loss when starting out.
 # - Use ctrl+f and search for [historical_averaging] to find relevant code segments.
 # 
+
+# %%
+%%time
+do_historical_averaging = True
+train_and_save('historical_averaging')
+
+#%%
+
+ani = load_and_plot('historical_averaging')
+HTML(ani.to_jshtml())
+# %% [markdown]
 #### Results
-# - Honestly it is hard to tell if the Historical Averaging made a difference from just looking at the images of the final epochs. The images from the early epochs / exploration phase are very blurry and unstable (across runs) both with and without the Historical Averaging. The model did not suffer from mode collapes in 500 epochs in either case.
-# - As a sanity check that our implementation was indeed doing anything, we flipped the sign of the 'exploration loss' in one experiment to discourage exploration. The result was that the GAN images looked more like random noise, and changed much more slowly, suggesting that the implementation was correct and it was discouraging exploration.
+# - Honestly it is hard to tell if the Historical Averaging made a difference from just looking at the images of the final epochs. The images from the early epochs / exploration phase are very blurry and unstable (across runs) both with and without the Historical Averaging. It does seem like with Historical Averaging, earlier epochs are more colorful, with more defined shapes. The model did not suffer from mode collapes in 500 epochs in either case.
 # - The training time increased slightly, from [X] seconds to [X] seconds for 500 epochs. We are running on a GPU. Historical Averaging is taking the MSE of **all** the generator weights with a historical average, and also updating the historical average every step. The vectors involved are large but the computations are straightforward (add, subtract, multiply) which is exactly what GPUs are good at.
+
+
+# %% [markdown]
+#### Results with 'inverted' 'exploration loss'
+
+# %%
+%%time
+do_historical_averaging = True
+invert_historical_averaging = True
+train_and_save('historical_averaging_inverted')
+#%%
+ani = load_and_plot('historical_averaging_inverted')
+HTML(ani.to_jshtml())
+# %% [markdown]
+# - As a sanity check that our implementation was indeed doing anything, we flipped the sign of the 'exploration loss' in one experiment to discourage exploration. The result was that the GAN images looked more like random noise with less defined shapes in the early epochs, and changed much more slowly, suggesting that the implementation was correct and it was discouraging exploration.
+
 # %%
