@@ -1,3 +1,11 @@
+# Final Project
+*.pt**
+*.bin
+t2g_show.txt
+*.pyc
+**/state_dicts/**
+
+
 # JPEG
 *.jpg
 *.jpeg
