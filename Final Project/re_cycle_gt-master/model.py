@@ -150,7 +150,6 @@ class CycleModel():
 		t_loss = self.t_cycle(text_batch)
 		return g_loss, t_loss
 
-	
 
 	def train(self, epochs, batch_size,  shuffle, t2g_lr=1e-3, g2t_lr=1e-3):
 		self.t2g_opt = torch.optim.Adam(self.t2g_model.model.parameters(), lr=t2g_lr)
@@ -227,8 +226,6 @@ class CycleModel():
 			torch.save(self.t2g_model.model.state_dict(), 't2g.pt')
 		
         
-
-    
 def main():
                     
 	# Opening JSON file
