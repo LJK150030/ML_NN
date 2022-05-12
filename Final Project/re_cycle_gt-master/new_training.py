@@ -37,7 +37,6 @@ def train():
     test_df = pd.concat([test_g2t_df, test_t2g_df], ignore_index=True)
     
     model = SimpleT5()
-
     model.from_pretrained("t5", "t5-small")
 
     model.train(train_df=train_df,  # pandas dataframe with 2 columns: source_text & target_text
