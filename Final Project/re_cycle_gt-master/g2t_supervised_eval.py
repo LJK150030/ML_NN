@@ -64,8 +64,8 @@ test_df = g2tPreprocess(raw_test)
 
 # load the model
 model = SimpleT5()
-model.from_pretrained("t5","t5-base")
-model.load_model("t5","outputs/simplet5-epoch-4-train-loss-0.3465", use_gpu=True)
+model.from_pretrained("t5","t5-small")
+model.load_model("t5",r"outputs\simplet5-epoch-3-train-loss-0.5151-val-loss-0.8625", use_gpu=True)
 
 ref = defaultdict(list)
 ptr = 0
@@ -77,13 +77,18 @@ for i in range(len(test_df)):
     same[ptr].append(test_df['target_text'][i].lower())
     ref[i] = same[ptr]
 
+
 bleu = Bleu(4)
 meteor = Meteor()
 rouge = Rouge()
 cider = Cider()
 
+print(type(ref))
+
+print(f"Predicting")
 hyp = [model.predict(test_df['source_text'][i])[0] for i in range(len(test_df))]
 
+print(f"Zipping")
 hyp = dict(zip(range(len(test_df)), [[x.lower()] for x in hyp]))
 # ref = dict(zip(range(len(dev_df)), [[dev_df['target_text'][i]] for i in range(len(dev_df))]))
 ret = bleu.compute_score(ref, hyp)

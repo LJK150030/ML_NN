@@ -37,7 +37,6 @@ def train(mode='duo'):
     test_duo_df = pd.concat([test_g2t_df, test_t2g_df], ignore_index=True)
     
     model = SimpleT5()
-
     model.from_pretrained("t5", "t5-small")
     
     if mode == 'duo':
