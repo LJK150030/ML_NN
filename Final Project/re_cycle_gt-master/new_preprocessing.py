@@ -79,11 +79,11 @@ def preprocess_all():
     preprocess(test_filepath, out_test_filepath)
 
 if __name__ == '__main__':
-    #preprocess_all()
-    dev_data = []
-    with open('json_datasets/out_dev.json', 'r', encoding='utf-8') as f:
-        dev_data = json.load(f)
+    preprocess_all()
+    # dev_data = []
+    # with open('json_datasets/out_dev.json', 'r', encoding='utf-8') as f:
+    #     dev_data = json.load(f)
 
-    json_to_df(dev_data, 'g2t: ', 'graph', 'text')
+    # json_to_df(dev_data, 'g2t: ', 'graph', 'text')
 
 # %%
