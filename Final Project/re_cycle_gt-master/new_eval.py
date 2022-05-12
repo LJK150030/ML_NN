@@ -13,7 +13,7 @@ import json
 import new_preprocessing
 import numpy as np
 
-from nubia import Nubia
+#from nubia import Nubia
 
 
 def removeQuotes(lst):
